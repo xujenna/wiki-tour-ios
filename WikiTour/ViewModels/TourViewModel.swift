@@ -2,8 +2,6 @@ import Foundation
 import CoreLocation
 import Observation
 
-/// Mirrors the end-to-end flow of the original wiki-tour web app:
-///   getLocation() → geocodeLatLng() → getWikiPage() → sortData() → getWayPts() → initMap()
 @Observable
 final class TourViewModel: NSObject, CLLocationManagerDelegate {
 
@@ -19,9 +17,9 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
 
     var phase: Phase = .idle
     var landmarks: [Landmark] = []
-    var routeCoordinates: [CLLocationCoordinate2D] = []   // straight-line path for map polyline
+    var routeCoordinates: [CLLocationCoordinate2D] = []
     var userLocation: CLLocationCoordinate2D?
-    var locationName: String = ""                          // "City, State" for the UI header
+    var locationName: String = ""
     var statusMessage: String = ""
     var error: String?
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
@@ -38,7 +36,6 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
 
     // MARK: - Public API
 
-    /// Called on app appear — requests permission then fires a one-shot location fix.
     func start() {
         authorizationStatus = locationManager.authorizationStatus
         switch authorizationStatus {
@@ -64,7 +61,6 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
     private func beginTour() {
         phase = .locating
         statusMessage = "Getting your location…"
-        // One-shot fix, same as navigator.geolocation.getCurrentPosition() in the original.
         locationManager.requestLocation()
     }
 
@@ -94,32 +90,43 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
         phase = .done
     }
 
-    // MARK: - Tour building (geocodeLatLng → getWikiPage → sortData → getWayPts)
+    // MARK: - Tour building
 
     @MainActor
     private func buildTour(from location: CLLocation) async {
         phase = .geocoding
-        statusMessage = "Finding your county…"
+        statusMessage = "Finding your location…"
         error = nil
 
-        do {
-            let placemark = try await reverseGeocode(location: location)
+        // Reverse-geocode to get city / county / state.
+        // county + state are optional — NRHP source requires them (US only);
+        // geosearch works without them everywhere.
+        var county: String?
+        var state: String?
 
-            guard let county = placemark.subAdministrativeArea,
-                  let state  = placemark.administrativeArea
-            else {
-                error = "Couldn't determine your county. Try moving to a different spot and refreshing."
-                phase = .done
-                return
+        if let placemark = try? await reverseGeocode(location: location) {
+            county = placemark.subAdministrativeArea
+            state  = placemark.administrativeArea
+
+            // Build the display name: prefer "City, State", fall back to "County, State"
+            // or just "State", or just coordinates.
+            if let city = placemark.locality, let st = state {
+                locationName = "\(city), \(st)"
+            } else if let co = county, let st = state {
+                locationName = "\(co), \(st)"
+            } else if let st = state {
+                locationName = st
+            } else if let country = placemark.country {
+                locationName = country
             }
+        }
 
-            // Mirror grandReveal() — show the city/county name immediately.
-            locationName = placemark.locality.map { "\($0), \(state)" }
-                        ?? "\(county), \(state)"
+        phase = .loading
+        statusMessage = county != nil
+            ? "Finding historic landmarks in \(county!)…"
+            : "Finding historic and cultural sites nearby…"
 
-            phase = .loading
-            statusMessage = "Finding historical landmarks in \(county)…"
-
+        do {
             let results = try await WikipediaService.shared.findLandmarks(
                 near: location.coordinate,
                 county: county,
@@ -130,7 +137,6 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
             )
 
             landmarks = results
-            // Build a straight-line polyline: user → stop 1 → stop 2 → … → stop 10
             if let userLoc = userLocation {
                 routeCoordinates = [userLoc] + results.map(\.coordinate)
             }
@@ -142,8 +148,6 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
             phase = .done
         }
     }
-
-    // MARK: - CLGeocoder wrapper (mirrors Google Maps Geocoder in the original)
 
     private func reverseGeocode(location: CLLocation) async throws -> CLPlacemark {
         try await withCheckedThrowingContinuation { continuation in

@@ -50,17 +50,36 @@ struct WikiLink: Codable {
     }
 }
 
+// MARK: - Wikipedia geosearch API response
+
+struct GeoSearchResponse: Codable {
+    let query: GeoQuery
+}
+struct GeoQuery: Codable {
+    let geosearch: [GeoArticle]
+}
+struct GeoArticle: Codable {
+    let pageid: Int
+    let title: String
+    let lat: Double
+    let lon: Double
+    let dist: Double
+}
+
 // MARK: - Wikipedia REST summary response
 
 struct WikiSummaryResponse: Codable {
     let displaytitle: String?
+    /// Short Wikidata description, e.g. "historic district in Manhattan" — used for
+    /// significance filtering in the geosearch path.
+    let description: String?
     let extract: String?
     let coordinates: WikiCoordinates?
     let thumbnail: ThumbnailInfo?
     let contentUrls: ContentURLs?
 
     enum CodingKeys: String, CodingKey {
-        case displaytitle, extract, coordinates, thumbnail
+        case displaytitle, description, extract, coordinates, thumbnail
         case contentUrls = "content_urls"
     }
 }
