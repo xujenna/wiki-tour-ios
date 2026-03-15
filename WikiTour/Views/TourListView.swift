@@ -5,28 +5,26 @@ struct TourListView: View {
 
     var body: some View {
         List {
-            if viewModel.isLoading && viewModel.landmarks.isEmpty {
-                loadingRow
-            } else if let error = viewModel.error {
+            if let error = viewModel.error {
                 errorRow(message: error)
             } else if viewModel.landmarks.isEmpty {
                 emptyRow
             } else {
                 Section {
-                    ForEach(Array(viewModel.landmarks.enumerated()), id: \.element.id) { index, landmark in
+                    ForEach(viewModel.landmarks) { landmark in
                         NavigationLink(value: landmark) {
-                            LandmarkRow(landmark: landmark, stopNumber: index + 1)
+                            LandmarkRow(landmark: landmark)
                         }
                     }
                 } header: {
-                    Text("Walking Tour · \(viewModel.landmarks.count) stops")
+                    Text("\(viewModel.landmarks.count)-stop walking tour · \(viewModel.locationName)")
                 }
             }
         }
         .navigationTitle("WikiTour")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.isLoading {
+                if viewModel.phase == .loading {
                     ProgressView()
                 } else {
                     Button { viewModel.refresh() } label: {
@@ -38,22 +36,6 @@ struct TourListView: View {
     }
 
     // MARK: - Private row helpers
-
-    @ViewBuilder
-    private var loadingRow: some View {
-        HStack {
-            Spacer()
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("Finding nearby landmarks…")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .listRowBackground(Color.clear)
-        .padding(.top, 60)
-    }
 
     @ViewBuilder
     private func errorRow(message: String) -> some View {
@@ -72,8 +54,8 @@ struct TourListView: View {
     private var emptyRow: some View {
         ContentUnavailableView(
             "No Landmarks Found",
-            systemImage: "map.circle",
-            description: Text("No historical landmarks found within \(viewModel.searchRadius) m of your location.")
+            systemImage: "building.columns",
+            description: Text("No National Register of Historic Places listings were found near your location.")
         )
         .listRowBackground(Color.clear)
     }
@@ -83,7 +65,6 @@ struct TourListView: View {
 
 struct LandmarkRow: View {
     let landmark: Landmark
-    let stopNumber: Int
 
     var body: some View {
         HStack(spacing: 14) {
@@ -91,7 +72,7 @@ struct LandmarkRow: View {
                 Circle()
                     .fill(Color.accentColor.opacity(0.12))
                     .frame(width: 36, height: 36)
-                Text("\(stopNumber)")
+                Text("\(landmark.stopNumber ?? 0)")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }

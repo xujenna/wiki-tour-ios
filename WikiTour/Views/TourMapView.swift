@@ -11,10 +11,22 @@ struct TourMapView: View {
         ZStack(alignment: .top) {
             Map(position: $position, selection: $selectedLandmark) {
                 UserAnnotation()
+
+                // Straight-line walking route connecting the stops (mirrors Google Maps
+                // walking directions in the original).
+                if viewModel.routeCoordinates.count >= 2 {
+                    MapPolyline(coordinates: viewModel.routeCoordinates)
+                        .stroke(Color.accentColor.opacity(0.55), lineWidth: 3)
+                }
+
+                // Numbered stop markers.
                 ForEach(viewModel.landmarks) { landmark in
                     Annotation(landmark.title, coordinate: landmark.coordinate, anchor: .bottom) {
-                        LandmarkMarker(isSelected: selectedLandmark == landmark)
-                            .onTapGesture { selectedLandmark = landmark }
+                        StopMarker(
+                            number: landmark.stopNumber ?? 0,
+                            isSelected: selectedLandmark == landmark
+                        )
+                        .onTapGesture { selectedLandmark = landmark }
                     }
                     .tag(landmark)
                 }
@@ -29,16 +41,16 @@ struct TourMapView: View {
             // Floating header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("WikiTour")
+                    Text(viewModel.locationName.isEmpty ? "WikiTour" : viewModel.locationName)
                         .font(.title3.bold())
                     if !viewModel.landmarks.isEmpty {
-                        Text("\(viewModel.landmarks.count) landmarks nearby")
+                        Text("\(viewModel.landmarks.count)-stop walking tour")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
-                if viewModel.isLoading {
+                if viewModel.phase == .loading {
                     ProgressView()
                 } else {
                     Button { viewModel.refresh() } label: {
@@ -50,7 +62,7 @@ struct TourMapView: View {
             .padding(.vertical, 12)
             .background(.regularMaterial)
         }
-        // Bottom card for the tapped landmark
+        // Bottom card for tapped landmark
         .safeAreaInset(edge: .bottom) {
             if let landmark = selectedLandmark {
                 NavigationLink(value: landmark) {
@@ -66,36 +78,41 @@ struct TourMapView: View {
     }
 }
 
-// MARK: - Sub-views
+// MARK: - Numbered stop marker (mirrors Google Maps numbered labels in the original)
 
-struct LandmarkMarker: View {
+struct StopMarker: View {
+    let number: Int
     let isSelected: Bool
 
     var body: some View {
         ZStack {
             Circle()
                 .fill(isSelected ? Color.accentColor : .white)
-                .frame(width: isSelected ? 42 : 30, height: isSelected ? 42 : 30)
+                .frame(width: isSelected ? 40 : 30, height: isSelected ? 40 : 30)
                 .shadow(color: .black.opacity(0.2), radius: 4)
-            Image(systemName: "building.columns.fill")
-                .font(.system(size: isSelected ? 18 : 13))
+            Text("\(number)")
+                .font(.system(size: isSelected ? 16 : 12, weight: .bold))
                 .foregroundStyle(isSelected ? .white : Color.accentColor)
         }
         .animation(.spring(response: 0.3), value: isSelected)
     }
 }
 
+// MARK: - Bottom card for selected landmark
+
 struct LandmarkCard: View {
     let landmark: Landmark
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: "building.columns.fill")
-                .font(.title2)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 44, height: 44)
-                .background(Color.accentColor.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 44, height: 44)
+                Text("\(landmark.stopNumber ?? 0)")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(landmark.title)

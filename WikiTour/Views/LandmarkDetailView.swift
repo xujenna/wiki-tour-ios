@@ -4,17 +4,14 @@ import MapKit
 struct LandmarkDetailView: View {
     let landmark: Landmark
 
-    @State private var summary: String?
-    @State private var thumbnailURL: URL?
-    @State private var pageURL: URL?
-    @State private var isLoading = true
+    @State private var isLoading = false    // summary already in landmark.description
     @State private var loadError: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
 
-                // Hero: photo if available, otherwise a map snippet
+                // Hero image or map snippet
                 heroImage
                     .frame(maxWidth: .infinity)
                     .frame(height: 240)
@@ -22,8 +19,13 @@ struct LandmarkDetailView: View {
 
                 VStack(alignment: .leading, spacing: 16) {
 
-                    // Title + distance
+                    // Stop number + title
                     VStack(alignment: .leading, spacing: 6) {
+                        if let stop = landmark.stopNumber {
+                            Text("Stop \(stop)")
+                                .font(.caption.uppercaseSmallCaps())
+                                .foregroundStyle(Color.accentColor)
+                        }
                         Text(landmark.title)
                             .font(.title2.bold())
                         if !landmark.formattedDistance.isEmpty {
@@ -35,21 +37,19 @@ struct LandmarkDetailView: View {
 
                     Divider()
 
-                    // Summary / skeleton / error
-                    if isLoading {
-                        skeletonRows
-                    } else if let loadError {
-                        Label(loadError, systemImage: "exclamationmark.triangle")
-                            .font(.subheadline)
+                    // Description (extract from Wikipedia summary)
+                    if landmark.description.isEmpty {
+                        Text("No description available.")
                             .foregroundStyle(.secondary)
-                    } else if let summary {
-                        Text(summary)
+                            .italic()
+                    } else {
+                        Text(landmark.description)
                             .font(.body)
                             .lineSpacing(6)
                     }
 
                     // Wikipedia link
-                    if let pageURL {
+                    if let pageURL = landmark.wikipediaURL {
                         Divider()
                         Link(destination: pageURL) {
                             Label("Read on Wikipedia", systemImage: "arrow.up.right.square")
@@ -57,7 +57,7 @@ struct LandmarkDetailView: View {
                         }
                     }
 
-                    // Directions button
+                    // Walking directions via Apple Maps
                     Button(action: openInMaps) {
                         Label("Get Walking Directions", systemImage: "arrow.triangle.turn.up.right.circle.fill")
                             .frame(maxWidth: .infinity)
@@ -70,20 +70,17 @@ struct LandmarkDetailView: View {
         }
         .ignoresSafeArea(edges: .top)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadDetails() }
     }
 
     // MARK: - Sub-views
 
     @ViewBuilder
     private var heroImage: some View {
-        if let thumbnailURL {
-            AsyncImage(url: thumbnailURL) { phase in
+        if let imageURL = landmark.imageURL {
+            AsyncImage(url: imageURL) { phase in
                 switch phase {
-                case .success(let img):
-                    img.resizable().aspectRatio(contentMode: .fill)
-                case .failure:
-                    mapSnippet
+                case .success(let img): img.resizable().aspectRatio(contentMode: .fill)
+                case .failure:          mapSnippet
                 default:
                     Rectangle()
                         .fill(.quaternary)
@@ -105,39 +102,7 @@ struct LandmarkDetailView: View {
         .disabled(true)
     }
 
-    private var skeletonRows: some View {
-        VStack(spacing: 10) {
-            ForEach(0..<5, id: \.self) { i in
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(.quaternary)
-                    .frame(maxWidth: i == 4 ? 200 : .infinity)
-                    .frame(height: 14)
-            }
-        }
-    }
-
-    // MARK: - Data loading
-
-    private func loadDetails() async {
-        isLoading = true
-        loadError = nil
-        defer { isLoading = false }
-
-        do {
-            let response = try await WikipediaService.shared.summary(for: landmark.title)
-            summary = response.extract
-            if let src = response.thumbnail?.source {
-                thumbnailURL = URL(string: src)
-            }
-            if let page = response.contentUrls?.mobile?.page {
-                pageURL = URL(string: page)
-            }
-        } catch {
-            loadError = "Could not load details."
-        }
-    }
-
-    // MARK: - Maps
+    // MARK: - Actions
 
     private func openInMaps() {
         let item = MKMapItem(placemark: MKPlacemark(coordinate: landmark.coordinate))

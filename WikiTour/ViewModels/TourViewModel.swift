@@ -2,22 +2,33 @@ import Foundation
 import CoreLocation
 import Observation
 
+/// Mirrors the end-to-end flow of the original wiki-tour web app:
+///   getLocation() → geocodeLatLng() → getWikiPage() → sortData() → getWayPts() → initMap()
 @Observable
 final class TourViewModel: NSObject, CLLocationManagerDelegate {
 
-    // MARK: - Published state
+    // MARK: - State
 
+    enum Phase: Equatable {
+        case idle
+        case locating
+        case geocoding
+        case loading
+        case done
+    }
+
+    var phase: Phase = .idle
     var landmarks: [Landmark] = []
+    var routeCoordinates: [CLLocationCoordinate2D] = []   // straight-line path for map polyline
     var userLocation: CLLocationCoordinate2D?
-    var isLoading = false
+    var locationName: String = ""                          // "City, State" for the UI header
+    var statusMessage: String = ""
     var error: String?
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
-    var searchRadius: Int = 1000
 
     // MARK: - Private
 
     private let locationManager = CLLocationManager()
-    private var lastFetchLocation: CLLocation?
 
     override init() {
         super.init()
@@ -27,22 +38,34 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
 
     // MARK: - Public API
 
+    /// Called on app appear — requests permission then fires a one-shot location fix.
     func start() {
         authorizationStatus = locationManager.authorizationStatus
         switch authorizationStatus {
         case .notDetermined:
             locationManager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways:
-            locationManager.startUpdatingLocation()
+            beginTour()
         default:
             error = "Location access denied. Please enable in Settings > WikiTour."
         }
     }
 
     func refresh() {
-        guard let location = locationManager.location else { return }
-        lastFetchLocation = nil
-        Task { await loadLandmarks(from: location) }
+        landmarks = []
+        routeCoordinates = []
+        locationName = ""
+        error = nil
+        beginTour()
+    }
+
+    // MARK: - Private tour flow
+
+    private func beginTour() {
+        phase = .locating
+        statusMessage = "Getting your location…"
+        // One-shot fix, same as navigator.geolocation.getCurrentPosition() in the original.
+        locationManager.requestLocation()
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -51,8 +74,9 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
         authorizationStatus = manager.authorizationStatus
         switch authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
-            locationManager.startUpdatingLocation()
+            if phase == .idle { beginTour() }
         case .denied, .restricted:
+            phase = .done
             error = "Location access denied. Please enable in Settings > WikiTour."
         default:
             break
@@ -62,40 +86,78 @@ final class TourViewModel: NSObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         userLocation = location.coordinate
-
-        // Re-fetch only after moving more than 200 m from the last fetch point.
-        if let last = lastFetchLocation, location.distance(from: last) < 200 { return }
-        lastFetchLocation = location
-
-        Task { await loadLandmarks(from: location) }
+        Task { await buildTour(from: location) }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        self.error = "Location error: \(error.localizedDescription)"
+        self.error = "Couldn't get your location: \(error.localizedDescription)"
+        phase = .done
     }
 
-    // MARK: - Data loading
+    // MARK: - Tour building (geocodeLatLng → getWikiPage → sortData → getWayPts)
 
     @MainActor
-    private func loadLandmarks(from location: CLLocation) async {
-        isLoading = true
+    private func buildTour(from location: CLLocation) async {
+        phase = .geocoding
+        statusMessage = "Finding your county…"
         error = nil
-        defer { isLoading = false }
 
         do {
-            var results = try await WikipediaService.shared.nearbyLandmarks(
-                at: location.coordinate,
-                radius: searchRadius
-            )
-            // Attach walking distances and sort nearest-first.
-            for i in results.indices {
-                let dest = CLLocation(latitude: results[i].lat, longitude: results[i].lon)
-                results[i].distance = location.distance(from: dest)
+            let placemark = try await reverseGeocode(location: location)
+
+            guard let county = placemark.subAdministrativeArea,
+                  let state  = placemark.administrativeArea
+            else {
+                error = "Couldn't determine your county. Try moving to a different spot and refreshing."
+                phase = .done
+                return
             }
-            results.sort { ($0.distance ?? .infinity) < ($1.distance ?? .infinity) }
+
+            // Mirror grandReveal() — show the city/county name immediately.
+            locationName = placemark.locality.map { "\($0), \(state)" }
+                        ?? "\(county), \(state)"
+
+            phase = .loading
+            statusMessage = "Finding historical landmarks in \(county)…"
+
+            let results = try await WikipediaService.shared.findLandmarks(
+                near: location.coordinate,
+                county: county,
+                state: state,
+                progress: { [weak self] msg in
+                    Task { @MainActor [weak self] in self?.statusMessage = msg }
+                }
+            )
+
             landmarks = results
+            // Build a straight-line polyline: user → stop 1 → stop 2 → … → stop 10
+            if let userLoc = userLocation {
+                routeCoordinates = [userLoc] + results.map(\.coordinate)
+            }
+            phase = .done
+            statusMessage = results.isEmpty ? "No landmarks found nearby." : "Have fun!"
+
         } catch {
-            self.error = error.localizedDescription
+            self.error = "Couldn't load landmarks: \(error.localizedDescription)"
+            phase = .done
+        }
+    }
+
+    // MARK: - CLGeocoder wrapper (mirrors Google Maps Geocoder in the original)
+
+    private func reverseGeocode(location: CLLocation) async throws -> CLPlacemark {
+        try await withCheckedThrowingContinuation { continuation in
+            CLGeocoder().reverseGeocodeLocation(location) { placemarks, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let placemark = placemarks?.first {
+                    continuation.resume(returning: placemark)
+                } else {
+                    continuation.resume(throwing: NSError(
+                        domain: "WikiTour", code: 0,
+                        userInfo: [NSLocalizedDescriptionKey: "No placemark returned"]))
+                }
+            }
         }
     }
 }
