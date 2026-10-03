@@ -1,93 +1,257 @@
 import SwiftUI
+import MapKit
 
 struct TourListView: View {
     let viewModel: TourViewModel
+    let showPlace: (Landmark) -> Void
+    let startWalk: () -> Void
+    let onClose: () -> Void
 
     var body: some View {
-        List {
-            if let error = viewModel.error {
-                errorRow(message: error)
-            } else if viewModel.landmarks.isEmpty {
-                emptyRow
-            } else {
-                Section {
-                    ForEach(viewModel.landmarks) { landmark in
-                        NavigationLink(value: landmark) {
-                            LandmarkRow(landmark: landmark)
+        NavigationStack {
+            List {
+                if viewModel.savedLandmarks.isEmpty {
+                    ContentUnavailableView {
+                        Label("A walk of your own", systemImage: "bookmark")
+                    } description: {
+                        Text("Tap a place on the map, then bookmark it. Your saved places become your walking tour.")
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    Section {
+                        ForEach(viewModel.savedLandmarks) { landmark in
+                            Button { showPlace(landmark) } label: {
+                                HStack(spacing: 12) {
+                                    LandmarkEmoji(landmark: landmark, size: 28)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(landmark.title).font(.headline)
+                                        if !landmark.formattedDistance.isEmpty {
+                                            Text(landmark.formattedDistance + " away").font(.caption)
+                                        }
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption)
+                                }
+                                .foregroundStyle(TourStyle.ink).padding(.vertical, 6)
+                            }
+                            .swipeActions {
+                                Button("Remove", role: .destructive) { viewModel.toggleSaved(landmark) }
+                            }
+                        }
+                    } footer: {
+                        Text("Stops are ordered for a shorter walk. Swipe a place to remove it.")
+                    }
+                    Section {
+                        if viewModel.isRouting {
+                            HStack { ProgressView(); Text("Finding directions…") }
+                        } else if let error = viewModel.routeError {
+                            Text(error)
+                            Button("Try directions again") { viewModel.prepareRoute() }
+                        } else {
+                            Text(viewModel.routeSummary).font(.subheadline.weight(.semibold))
+                            if viewModel.userLocation == nil {
+                                Text("This walk starts at your first saved place. Enable location to include the walk from where you are.")
+                                    .font(.caption)
+                            }
+                            Button(action: startWalk) {
+                                Label("Start walking", systemImage: "figure.walk")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent).tint(TourStyle.ink)
+                            .disabled(viewModel.routeStops.isEmpty)
+                            .accessibilityIdentifier("startWalking")
                         }
                     }
-                } header: {
-                    Text("\(viewModel.landmarks.count)-stop walking tour · \(viewModel.locationName)")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(TourStyle.paper)
+            .navigationTitle("Saved places")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { onClose() }.foregroundStyle(TourStyle.ink)
                 }
             }
         }
-        .navigationTitle("WikiTour")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.phase == .loading {
-                    ProgressView()
-                } else {
-                    Button { viewModel.refresh() } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Private row helpers
-
-    @ViewBuilder
-    private func errorRow(message: String) -> some View {
-        ContentUnavailableView {
-            Label("Something went wrong", systemImage: "exclamationmark.triangle")
-        } description: {
-            Text(message)
-        } actions: {
-            Button("Try Again") { viewModel.refresh() }
-                .buttonStyle(.borderedProminent)
-        }
-        .listRowBackground(Color.clear)
-    }
-
-    @ViewBuilder
-    private var emptyRow: some View {
-        ContentUnavailableView(
-            "No Landmarks Found",
-            systemImage: "building.columns",
-            description: Text("No National Register of Historic Places listings were found near your location.")
-        )
-        .listRowBackground(Color.clear)
+        .fontDesign(.rounded)
+        .environment(\.colorScheme, .light)
     }
 }
 
-// MARK: - LandmarkRow
-
-struct LandmarkRow: View {
-    let landmark: Landmark
+struct WalkingTourView: View {
+    @Environment(\.isTourSheetCollapsed) private var isCollapsed
+    let viewModel: TourViewModel
+    let onClear: () -> Void
+    let onSave: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 36, height: 36)
-                Text("\(landmark.stopNumber ?? 0)")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            WalkSummaryHeader(viewModel: viewModel, onSave: onSave, onAction: onClear)
+            .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 8)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(landmark.title)
-                    .font(.body)
-                    .lineLimit(2)
-                if !landmark.formattedDistance.isEmpty {
-                    Label(landmark.formattedDistance, systemImage: "location.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            if !isCollapsed, let stop = viewModel.currentStop {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(stop.title).font(.system(.title2, design: .rounded, weight: .heavy))
+                            .accessibilityIdentifier("currentStopTitle")
+                        LandmarkPhoto(landmark: stop).frame(height: 204)
+                        LandmarkDescription(landmark: stop, viewModel: viewModel)
+                        HStack {
+                            if let url = stop.wikipediaURL {
+                                Link("Wikipedia", destination: url)
+                            }
+                            Spacer()
+                            Button("Directions") { openDirections(to: stop) }
+                        }.font(.caption.weight(.semibold)).padding(.top, 8)
+                    }.padding(.horizontal, 20).padding(.bottom, 12)
                 }
+                .id(stop.id)
+                if let message = viewModel.extendMessage, isLastStop {
+                    Text(message).font(.system(size: 14, design: .rounded))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.horizontal, 20)
+                }
+                HStack {
+                    let isFirstStop = viewModel.currentStopIndex == 0
+                    Button("← Back") { viewModel.currentStopIndex -= 1 }
+                        .disabled(isFirstStop)
+                        // The sheet's ink color overrides the system's dimmed disabled style.
+                        .opacity(isFirstStop ? 0.3 : 1)
+                    Spacer()
+                    if viewModel.isExtending {
+                        HStack(spacing: 8) { ProgressView(); Text("Finding more…") }
+                    } else {
+                        Button(nextLabel) {
+                            if !isLastStop { viewModel.currentStopIndex += 1 }
+                            else if viewModel.canKeepGoing { viewModel.keepGoing() }
+                            else { onClear() }
+                        }
+                        .accessibilityIdentifier("nextStop")
+                        .accessibilityValue("Stop \(viewModel.currentStopIndex + 1) of \(viewModel.routeStops.count)")
+                    }
+                }
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 20).padding(.vertical, 12)
+            } else if !isCollapsed {
+                ContentUnavailableView("Choose your stops", systemImage: "bookmark", description: Text("Save places on the map to make a walking tour."))
             }
         }
-        .padding(.vertical, 4)
+        .foregroundStyle(TourStyle.ink)
+        .tint(TourStyle.ink)
+        .animation(nil, value: isCollapsed)
+        .background(TourStyle.paper)
+        .environment(\.colorScheme, .light)
+    }
+
+    private var isLastStop: Bool { viewModel.currentStopIndex + 1 >= viewModel.routeStops.count }
+
+    /// The last stop of the current tour offers "Keep going"; a saved walk still ends with Finish.
+    private var nextLabel: String {
+        !isLastStop ? "Next →" : viewModel.canKeepGoing ? "Keep going →" : "Finish ✓"
+    }
+
+    private func openDirections(to landmark: Landmark) {
+        let item = MKMapItem(placemark: MKPlacemark(coordinate: landmark.coordinate))
+        item.name = landmark.title
+        let mode = viewModel.travelMode == .driving ? MKLaunchOptionsDirectionsModeDriving : MKLaunchOptionsDirectionsModeWalking
+        item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: mode])
+    }
+}
+
+struct SavedWalksView: View {
+    let viewModel: TourViewModel
+    let openWalk: (SavedWalk) -> Void
+    let editDraft: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("\(viewModel.savedWalks.count) saved \(viewModel.savedWalks.count == 1 ? "walk" : "walks")")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                Spacer()
+                Button("Done", action: onClose).font(.subheadline.weight(.semibold))
+            }.padding(.horizontal, 20).padding(.top, 22).padding(.bottom, 16)
+            ScrollView {
+                LazyVStack(spacing: 20) {
+                    if viewModel.savedWalks.isEmpty {
+                        ContentUnavailableView("Your walks belong here", systemImage: "heart", description: Text("Bookmark places to build a walk, then tap the heart on your walking tour to save it."))
+                    }
+                    ForEach(viewModel.savedWalks) { walk in
+                        Button { openWalk(walk) } label: {
+                            ZStack(alignment: .bottomLeading) {
+                                if let cover = walk.cover { LandmarkPhoto(landmark: cover) }
+                                LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
+                                Text(walk.name)
+                                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 10)
+                                    .padding(10)
+                            }
+                            .frame(height: 204).clipShape(RoundedRectangle(cornerRadius: 20))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(walk.name), \(walk.stops.count) stops")
+                        .accessibilityIdentifier("savedWalk-\(walk.id)")
+                    }
+
+                }.padding(.horizontal, 20).padding(.bottom, 20)
+            }
+                    Button(action: editDraft) {
+                        Label("Current walk · \(viewModel.savedLandmarks.count) places", systemImage: "bookmark")
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    }
+                    .accessibilityIdentifier("savedPlaces")
+        }
+        .foregroundStyle(TourStyle.ink).tint(TourStyle.ink)
+        .background(TourStyle.paper).environment(\.colorScheme, .light)
+    }
+}
+
+/// Shared by the collapsed map bar and open walk drawer.
+struct WalkSummaryHeader: View {
+    let viewModel: TourViewModel
+    var onOpen: (() -> Void)? = nil
+    let onSave: () -> Void
+    let onAction: () -> Void
+
+    private var summary: String {
+        viewModel.activeSavedWalk.map { $0.name + " • " + viewModel.routeSummary } ?? viewModel.routeSummary
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if let onOpen {
+                Button(action: onOpen) {
+                    summaryText.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Open walking tour. " + summary)
+                .accessibilityIdentifier("tourSummary")
+            } else {
+                summaryText.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            Button(action: onSave) {
+                Image(viewModel.activeSavedWalk == nil ? "WalkHeart" : "WalkHeartFilled")
+                    .frame(width: 40, height: 44)
+            }
+            .accessibilityLabel(viewModel.activeSavedWalk == nil ? "Save walk" : "Unsave walk")
+            .accessibilityIdentifier("saveWalk")
+            .disabled(viewModel.routeStops.isEmpty || viewModel.isRouting)
+            Button(action: onAction) {
+                Image("WalkDone")
+                    .frame(width: 40, height: 44)
+            }
+            .accessibilityLabel("Clear current route")
+            .accessibilityIdentifier("walkAction")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(TourStyle.ink)
+    }
+
+    private var summaryText: some View {
+        Text(summary).font(.system(size: 14, weight: .semibold, design: .rounded))
+            .tracking(0.14).lineLimit(2).minimumScaleFactor(0.85)
+            .padding(.leading, 10).padding(.trailing, 4)
     }
 }

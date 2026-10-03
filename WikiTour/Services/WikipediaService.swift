@@ -1,327 +1,214 @@
 import Foundation
 import CoreLocation
 
-/// Two complementary sources feed the tour:
+/// Discovery merges two sources, with officially designated places preferred:
 ///
-///  1. **NRHP** (US only) — parses county-level "National Register of Historic Places
-///     listings in …" pages, exactly as the original web app does.
+///  1. **Heritage designations** from Wikidata: places listed on the National Register of
+///     Historic Places, National Historic Landmarks, city landmarks, and equivalent registers
+///     worldwide (UK listed buildings, French monuments historiques, UNESCO sites, …).
+///  2. **Nearby Wikipedia articles** whose short description names a cultural place type
+///     (museum, memorial, church, park, …). These only top up the designated places.
 ///
-///  2. **Geosearch** (global) — queries Wikipedia's geosearch API for nearby articles,
-///     then keeps only those whose Wikidata short `description` contains a keyword
-///     indicating historic or cultural significance (museum, landmark, cathedral, etc.).
-///
-/// Results from both sources are merged, deduplicated, trimmed to 10, and ordered
-/// using a nearest-neighbour greedy algorithm.
+/// Summaries are fetched in small batches to avoid overwhelming Wikimedia.
 struct WikipediaService {
     static let shared = WikipediaService()
+    /// Walking discovery radius. Driving uses `maximumRadius`, Wikipedia geosearch's 10 km limit.
+    static let walkingRadius: CLLocationDistance = 3000
+    static let maximumRadius: CLLocationDistance = 10000
+    private let session: URLSession
 
-    private let apiBase  = "https://en.wikipedia.org/w/api.php"
-    private let restBase = "https://en.wikipedia.org/api/rest_v1/page/summary"
+    init(session: URLSession = .shared) { self.session = session }
 
-    // MARK: - Public entry point
-
-    /// `county` and `state` are optional — pass them when available (US) to unlock
-    /// the NRHP source; omit them (international) to use geosearch only.
-    func findLandmarks(
-        near coordinate: CLLocationCoordinate2D,
-        county: String?,
-        state: String?,
-        progress: @escaping (String) -> Void
-    ) async throws -> [Landmark] {
-        let userLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        var accumulated: [Landmark] = []
-
-        // ── Source 1: NRHP ────────────────────────────────────────────────────────
-        if let county, let state {
-            let pageName = nrhpPageName(county: county, state: state)
-            progress("Looking up National Register listings for \(county)…")
-            if let nrhp = try? await fetchNRHPLandmarks(
-                pageName: pageName, state: state, userLocation: userLocation
-            ) {
-                accumulated.append(contentsOf: nrhp)
-                progress("Found \(nrhp.count) NRHP sites. Searching for more…")
-            }
-        }
-
-        // ── Source 2: Geosearch (historic/cultural significance filter) ────────────
-        progress("Searching for nearby cultural and historic sites…")
-        let geo = await fetchGeoSearchLandmarks(near: coordinate, userLocation: userLocation)
-        // Deduplicate by title (case-insensitive) before merging.
-        let existingTitles = Set(accumulated.map { $0.title.lowercased() })
-        for lm in geo where !existingTitles.contains(lm.title.lowercased()) {
-            accumulated.append(lm)
-        }
-
-        // ── Select top 10 by distance, then optimise walk order ──────────────────
-        progress("Optimising your walking route…")
-        let top10 = Array(accumulated
+    func findLandmarks(near coordinate: CLLocationCoordinate2D,
+                       radius: CLLocationDistance = walkingRadius) async throws -> [Landmark] {
+        async let designatedResult = Self.capture { try await designatedPlaces(near: coordinate, radius: radius) }
+        async let articleResult = Self.capture { try await significantArticles(near: coordinate, radius: radius) }
+        let (designated, articles) = await (designatedResult, articleResult)
+        try Task.checkCancellation()
+        // An outage must not masquerade as an area with no landmarks.
+        if case .failure = designated, case .failure(let error) = articles { throw error }
+        var seen = Set<String>()
+        // Designated places come first so their richer metadata wins when both sources match.
+        let merged = ((try? designated.get()) ?? []) + ((try? articles.get()) ?? [])
+        return merged.filter { seen.insert($0.id).inserted }
             .sorted { ($0.distance ?? .infinity) < ($1.distance ?? .infinity) }
-            .prefix(10))
-        return nearestNeighbourRoute(from: coordinate, landmarks: top10)
     }
 
-    // MARK: - Source 1: NRHP
-
-    private func fetchNRHPLandmarks(
-        pageName: String,
-        state: String,
-        userLocation: CLLocation
-    ) async throws -> [Landmark] {
-        let links = try await resolveLinks(pageName: pageName)
-        return await fetchLandmarks(from: links, state: state, userLocation: userLocation)
+    private static func capture<T>(_ operation: () async throws -> T) async -> Result<T, Error> {
+        do { return .success(try await operation()) } catch { return .failure(error) }
     }
 
-    func nrhpPageName(county: String, state: String) -> String {
-        switch county {
-        case "Kings County":    return "National_Register_of_Historic_Places_listings_in_Brooklyn"
-        case "New York County": return "National_Register_of_Historic_Places_listings_in_Manhattan"
-        case "Bronx County":    return "National_Register_of_Historic_Places_listings_in_the_Bronx"
-        case "Queens County":   return "National_Register_of_Historic_Places_listings_in_Queens,_New_York"
-        case "Richmond County": return "National_Register_of_Historic_Places_listings_in_Staten_Island"
-        default:
-            let c = county.replacingOccurrences(of: " ", with: "_")
-            let s = state.replacingOccurrences(of: " ", with: "_")
-            return "National_Register_of_Historic_Places_listings_in_\(c),_\(s)"
+    // MARK: Designated places
+
+    /// Descriptions or Wikidata types of designated items that are not a single place a visitor can
+    /// stop at. Types catch what descriptions miss, such as Paris's “Métro station” with an accent.
+    static let excludedDesignatedTypes = ["subway station", "railway station", "metro station", "métro station",
+                                          "train station", "underground station", "elevated station", "s bahn station",
+                                          "station complex", "historic district", "neighborhood", "neighbourhood",
+                                          "borough of", "census-designated", "prefecture", "railway tunnel"]
+
+    static func isExcludedDesignatedPlace(description: String, types: [String]) -> Bool {
+        let text = ([description] + types).joined(separator: " ; ").lowercased().replacingOccurrences(of: "-", with: " ")
+        return excludedDesignatedTypes.contains(where: text.contains)
+    }
+
+    private func designatedPlaces(near coordinate: CLLocationCoordinate2D,
+                                  radius: CLLocationDistance) async throws -> [Landmark] {
+        let query = """
+        SELECT ?item (SAMPLE(?title) AS ?name) (SAMPLE(?description) AS ?summary) (MIN(?km) AS ?distance)
+               (SAMPLE(?image) AS ?photo) (SAMPLE(?designationLabel) AS ?listing)
+               (GROUP_CONCAT(DISTINCT ?typeLabel; separator="|") AS ?types)
+               (SAMPLE(?latitude) AS ?lat) (SAMPLE(?longitude) AS ?lon) WHERE {
+          SERVICE wikibase:around {
+            ?item wdt:P625 ?location .
+            bd:serviceParam wikibase:center "Point(\(coordinate.longitude) \(coordinate.latitude))"^^geo:wktLiteral .
+            bd:serviceParam wikibase:radius "\(radius / 1000)" .
+            bd:serviceParam wikibase:distance ?km .
+          }
+          ?item wdt:P1435 ?designation .
+          ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> ; schema:name ?title .
+          OPTIONAL { ?item schema:description ?description . FILTER(LANG(?description) = "en") }
+          OPTIONAL { ?item wdt:P18 ?image }
+          OPTIONAL { ?designation rdfs:label ?designationLabel . FILTER(LANG(?designationLabel) = "en") }
+          OPTIONAL { ?item wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = "en") }
+          BIND(geof:latitude(?location) AS ?latitude)
+          BIND(geof:longitude(?location) AS ?longitude)
+        } GROUP BY ?item ORDER BY ?distance LIMIT 300
+        """
+        var url = URLComponents(string: "https://query.wikidata.org/sparql")!
+        url.queryItems = [.init(name: "query", value: query), .init(name: "format", value: "json")]
+        let data = try await fetch(url.url!)
+        let rows = try JSONDecoder().decode(SPARQLResponse.self, from: data).results.bindings
+        return rows.compactMap { row in
+            guard let title = row["name"]?.value, let lat = row["lat"].flatMap({ Double($0.value) }),
+                  let lon = row["lon"].flatMap({ Double($0.value) }) else { return nil }
+            let summary = row["summary"]?.value ?? ""
+            let types = (row["types"]?.value ?? "").split(separator: "|").map(String.init)
+            guard !Self.isExcludedDesignatedPlace(description: summary, types: types) else { return nil }
+            // Commons file URLs accept a width, which keeps photos small enough for a phone.
+            let photo = row["photo"].flatMap { URL(string: $0.value.replacingOccurrences(of: "http://", with: "https://") + "?width=1280") }
+            let article = title.replacingOccurrences(of: " ", with: "_")
+                .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
+            return Landmark(title: title, coordinate: .init(latitude: lat, longitude: lon),
+                            description: "", categoryDescription: summary, imageURL: photo,
+                            wikipediaURL: URL(string: "https://en.wikipedia.org/wiki/\(article)"),
+                            distance: row["distance"].flatMap { Double($0.value) }.map { $0 * 1000 },
+                            designation: row["listing"]?.value ?? "Heritage designation",
+                            placeTypes: types.isEmpty ? nil : types)
         }
     }
 
-    private func resolveLinks(pageName: String) async throws -> [String] {
-        let sections = try await fetchSections(pageName: pageName)
+    // MARK: Significant nearby articles
 
-        guard let firstLine = sections.first else {
-            let allLinks = try await fetchLinks(pageName: pageName, section: nil)
-            var collected: [String] = []
-            for link in allLinks where link.contains("National Register of Historic Places listings") {
-                let sub = try await fetchLinks(
-                    pageName: link.replacingOccurrences(of: " ", with: "_"), section: "1"
-                )
-                collected.append(contentsOf: sub)
-            }
-            return collected
-        }
+    /// Whole-word place types. Ordinary schools, office buildings, and halls are deliberately absent:
+    /// historic examples still qualify through their heritage designation.
+    static let significantTypes: Set<String> = [
+        "archive", "square", "plaza", "zoo", "historic", "heritage", "landmark", "monument", "museum", "memorial",
+        "archaeological", "cultural", "cathedral", "castle", "palace", "park", "garden", "shrine", "cemetery",
+        "mausoleum", "ruins", "church", "synagogue", "mosque", "temple", "armory", "armoury", "library",
+        "theater", "theatre", "sculpture", "statue", "bridge"]
+    static let excludedArticleTypes = ["subway station", "railway station", "metro station", "neighborhood",
+                                       "neighbourhood", "borough of", "census-designated", "electoral district"]
 
-        switch firstLine {
-        case "Current listings", "Listings county-wide":
-            return try await fetchLinks(pageName: pageName, section: "1")
-
-        case "Listings by town", "Lists by area":
-            let subPages = try await fetchLinks(pageName: pageName, section: "1")
-            var collected: [String] = []
-            for sub in subPages {
-                let subLinks = try await fetchLinks(
-                    pageName: sub.replacingOccurrences(of: " ", with: "_"), section: "1"
-                )
-                collected.append(contentsOf: subLinks)
-            }
-            return collected
-
-        default:
-            return try await fetchLinks(pageName: pageName, section: "1")
-        }
+    /// Matches whole words in Wikipedia's short description, falling back to the title only when
+    /// there is no description, so “Park Slope Food Coop” is not mistaken for a park.
+    static func isSignificant(title: String, description: String) -> Bool {
+        let text = (description.isEmpty ? title : description).lowercased()
+        guard !excludedArticleTypes.contains(where: text.contains) else { return false }
+        let words = text.split { !$0.isLetter }.map(String.init)
+        return words.contains { significantTypes.contains($0) || ($0.hasSuffix("s") && significantTypes.contains(String($0.dropLast()))) }
     }
 
-    private func fetchSections(pageName: String) async throws -> [String] {
-        var c = URLComponents(string: apiBase)!
-        c.queryItems = [
-            URLQueryItem(name: "action", value: "parse"),
-            URLQueryItem(name: "format", value: "json"),
-            URLQueryItem(name: "page",   value: pageName),
-            URLQueryItem(name: "prop",   value: "sections"),
+    private func significantArticles(near coordinate: CLLocationCoordinate2D,
+                                     radius: CLLocationDistance) async throws -> [Landmark] {
+        var url = URLComponents(string: "https://en.wikipedia.org/w/api.php")!
+        url.queryItems = [
+            .init(name: "action", value: "query"), .init(name: "list", value: "geosearch"),
+            .init(name: "gscoord", value: "\(coordinate.latitude)|\(coordinate.longitude)"),
+            .init(name: "gsradius", value: "\(Int(min(radius, Self.maximumRadius)))"), .init(name: "gslimit", value: "50"),
+            .init(name: "gsnamespace", value: "0"), .init(name: "format", value: "json")
         ]
-        let (data, _) = try await URLSession.shared.data(from: c.url!)
-        let response  = try JSONDecoder().decode(ParseSectionsResponse.self, from: data)
-        return response.parse.sections.map(\.line)
-    }
-
-    private func fetchLinks(pageName: String, section: String?) async throws -> [String] {
-        var items: [URLQueryItem] = [
-            URLQueryItem(name: "action", value: "parse"),
-            URLQueryItem(name: "format", value: "json"),
-            URLQueryItem(name: "page",   value: pageName),
-            URLQueryItem(name: "prop",   value: "links"),
-        ]
-        if let section { items.append(URLQueryItem(name: "section", value: section)) }
-        var c = URLComponents(string: apiBase)!
-        c.queryItems = items
-        let (data, _) = try await URLSession.shared.data(from: c.url!)
-        let response  = try JSONDecoder().decode(ParseLinksResponse.self, from: data)
-        return response.parse.links.filter { $0.ns == 0 }.map(\.title)
-    }
-
-    // MARK: - Source 2: Geosearch with significance filter
-
-    /// Keywords matched against the Wikidata short `description` field returned by the
-    /// Wikipedia REST summary API. This field is terse and reliable, e.g.:
-    ///   "historic district in the Lower East Side of Manhattan"
-    ///   "art museum in Paris"
-    ///   "medieval cathedral in England"
-    ///   "Roman-era archaeological site in Greece"
-    private let significanceKeywords: [String] = [
-        "historic",        // historic district, historic building, historic site …
-        "heritage",        // world heritage, cultural heritage …
-        "landmark",        // architectural landmark, historical landmark …
-        "monument",        // national monument, war monument …
-        "museum",          // art museum, history museum, children's museum …
-        "memorial",        // war memorial, national memorial …
-        "archaeological",  // archaeological site, dig …
-        "cultural",        // cultural center, cultural site …
-        "cathedral",       // nearly always architecturally/historically significant
-        "castle",          // ditto
-        "palace",          // ditto
-        "listed building", // Historic England / Cadw / HES grade listings
-        "national park",   // US National Parks, international equivalents
-        "state park",
-        "national register",
-        "national historic",
-        "world heritage",
-        "shrine",          // religious/cultural significance
-        "cemetery",        // historic cemeteries (Arlington, Pere Lachaise …)
-        "mausoleum",
-        "ancient",         // ancient site, ancient ruins …
-        "ruins",
-    ]
-
-    private func fetchGeoSearchLandmarks(
-        near coordinate: CLLocationCoordinate2D,
-        userLocation: CLLocation,
-        radius: Int = 2000
-    ) async -> [Landmark] {
-        guard let articles = try? await fetchNearbyArticles(coordinate: coordinate, radius: radius)
-        else { return [] }
-
-        var results: [Landmark] = []
-        await withTaskGroup(of: Landmark?.self) { group in
-            for article in articles {
-                group.addTask {
-                    await self.fetchSignificantLandmark(title: article.title, userLocation: userLocation)
+        let data = try await fetch(url.url!)
+        let articles = try JSONDecoder().decode(GeoSearchResponse.self, from: data).query.geosearch
+        var landmarks: [Landmark] = []
+        var successfulSummaries = 0
+        for start in stride(from: 0, to: articles.count, by: 6) {
+            try Task.checkCancellation()
+            let batch = articles[start..<min(start + 6, articles.count)]
+            let results = await withTaskGroup(of: (Bool, Landmark?).self) { group in
+                for article in batch {
+                    group.addTask {
+                        do { return (true, try await summary(for: article)) }
+                        catch { return (false, nil) }
+                    }
                 }
+                var results: [(Bool, Landmark?)] = []
+                for await result in group { results.append(result) }
+                return results
             }
-            for await lm in group {
-                if let lm { results.append(lm) }
-            }
+            successfulSummaries += results.filter(\.0).count
+            landmarks.append(contentsOf: results.compactMap(\.1))
         }
-        return results
+        if !articles.isEmpty && successfulSummaries == 0 { throw URLError(.badServerResponse) }
+        return landmarks
     }
 
-    private func fetchNearbyArticles(
-        coordinate: CLLocationCoordinate2D,
-        radius: Int
-    ) async throws -> [GeoArticle] {
-        var c = URLComponents(string: apiBase)!
-        c.queryItems = [
-            URLQueryItem(name: "action",      value: "query"),
-            URLQueryItem(name: "list",        value: "geosearch"),
-            URLQueryItem(name: "gscoord",     value: "\(coordinate.latitude)|\(coordinate.longitude)"),
-            URLQueryItem(name: "gsradius",    value: "\(radius)"),
-            URLQueryItem(name: "gslimit",     value: "50"),
-            URLQueryItem(name: "gsnamespace", value: "0"),
-            URLQueryItem(name: "format",      value: "json"),
+    /// Load all introduction paragraphs, stopping before the first article section.
+    func introduction(for title: String) async throws -> String {
+        var url = URLComponents(string: "https://en.wikipedia.org/w/api.php")!
+        url.queryItems = [
+            .init(name: "action", value: "query"), .init(name: "prop", value: "extracts"),
+            .init(name: "titles", value: title), .init(name: "redirects", value: "1"),
+            .init(name: "exintro", value: "1"), .init(name: "explaintext", value: "1"), .init(name: "exsectionformat", value: "plain"),
+            .init(name: "format", value: "json"), .init(name: "formatversion", value: "2")
         ]
-        let (data, _) = try await URLSession.shared.data(from: c.url!)
-        return try JSONDecoder().decode(GeoSearchResponse.self, from: data).query.geosearch
-    }
-
-    /// Fetches the summary for a nearby article and returns a Landmark only if its
-    /// Wikidata description suggests historic or cultural significance.
-    private func fetchSignificantLandmark(title: String, userLocation: CLLocation) async -> Landmark? {
-        let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
-        guard let url = URL(string: "\(restBase)/\(encoded)"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let summary = try? JSONDecoder().decode(WikiSummaryResponse.self, from: data),
-              let coords  = summary.coordinates
-        else { return nil }
-
-        // Require a Wikidata description that matches at least one significance keyword.
-        let desc = (summary.description ?? "").lowercased()
-        guard !desc.isEmpty,
-              significanceKeywords.contains(where: { desc.contains($0) })
-        else { return nil }
-
-        let coordinate   = CLLocationCoordinate2D(latitude: coords.lat, longitude: coords.lon)
-        let landmarkLoc  = CLLocation(latitude: coords.lat, longitude: coords.lon)
-        let wikiURL      = summary.contentUrls?.desktop?.page.flatMap(URL.init)
-
-        return Landmark(
-            title: summary.displaytitle ?? title,
-            coordinate: coordinate,
-            description: summary.extract ?? "",
-            imageURL: summary.thumbnail.flatMap { URL(string: $0.source) },
-            wikipediaURL: wikiURL,
-            distance: landmarkLoc.distance(from: userLocation)
-        )
-    }
-
-    // MARK: - Shared: concurrent NRHP landmark fetching
-
-    private func fetchLandmarks(
-        from titles: [String],
-        state: String,
-        userLocation: CLLocation
-    ) async -> [Landmark] {
-        var results: [Landmark] = []
-        await withTaskGroup(of: Landmark?.self) { group in
-            for title in titles {
-                group.addTask {
-                    await self.fetchNRHPLandmark(title: title, state: state, userLocation: userLocation)
-                }
-            }
-            for await lm in group { if let lm { results.append(lm) } }
+        let data = try await fetch(url.url!)
+        let response = try JSONDecoder().decode(ArticleExtractResponse.self, from: data)
+        guard let page = response.query?.pages.first, page.missing != true,
+              let text = page.extract?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            throw URLError(.resourceUnavailable)
         }
-        return results
+        return text
     }
 
-    private func fetchNRHPLandmark(title: String, state: String, userLocation: CLLocation) async -> Landmark? {
-        let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
-        guard let url = URL(string: "\(restBase)/\(encoded)"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let summary  = try? JSONDecoder().decode(WikiSummaryResponse.self, from: data),
-              let coords   = summary.coordinates
-        else { return nil }
-
-        let displayTitle = summary.displaytitle ?? title
-        guard !displayTitle.contains(", \(state)"),
-              !displayTitle.contains("National Park Service")
-        else { return nil }
-
-        let coordinate  = CLLocationCoordinate2D(latitude: coords.lat, longitude: coords.lon)
-        let landmarkLoc = CLLocation(latitude: coords.lat, longitude: coords.lon)
-        let wikiURL     = summary.contentUrls?.desktop?.page.flatMap(URL.init)
-
-        return Landmark(
-            title: displayTitle,
-            coordinate: coordinate,
-            description: summary.extract ?? "",
-            imageURL: summary.thumbnail.flatMap { URL(string: $0.source) },
-            wikipediaURL: wikiURL,
-            distance: landmarkLoc.distance(from: userLocation)
-        )
+    private func summary(for article: GeoArticle) async throws -> Landmark? {
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))
+        guard let title = article.title.addingPercentEncoding(withAllowedCharacters: allowed),
+              let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(title)") else { return nil }
+        let data = try await fetch(url)
+        let summary = try JSONDecoder().decode(WikiSummaryResponse.self, from: data)
+        guard Self.isSignificant(title: summary.title ?? article.title, description: summary.description ?? "") else { return nil }
+        return Landmark(title: summary.title ?? article.title,
+                        coordinate: .init(latitude: article.lat, longitude: article.lon),
+                        description: summary.extract ?? "", categoryDescription: summary.description ?? "",
+                        imageURL: (summary.originalimage ?? summary.thumbnail).flatMap { URL(string: $0.source) },
+                        wikipediaURL: summary.contentUrls?.desktop?.page.flatMap(URL.init), distance: article.dist)
     }
 
-    // MARK: - Route optimisation (nearest-neighbour greedy TSP)
-
-    private func nearestNeighbourRoute(
-        from origin: CLLocationCoordinate2D,
-        landmarks: [Landmark]
-    ) -> [Landmark] {
-        var remaining = landmarks
-        var route: [Landmark] = []
-        var current = origin
-
-        while !remaining.isEmpty {
-            let nearest = remaining.min {
-                CLLocation(latitude: current.latitude, longitude: current.longitude)
-                    .distance(from: CLLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude))
-                <
-                CLLocation(latitude: current.latitude, longitude: current.longitude)
-                    .distance(from: CLLocation(latitude: $1.coordinate.latitude, longitude: $1.coordinate.longitude))
-            }!
-            route.append(nearest)
-            current = nearest.coordinate
-            remaining.removeAll { $0.id == nearest.id }
+    private func fetch(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 25
+        request.setValue("WikiTour-iOS/1.0 (https://github.com/xujenna/wiki-tour)", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+            throw URLError(.badServerResponse)
         }
-
-        return route.enumerated().map { i, l in
-            var copy = l; copy.stopNumber = i + 1; return copy
-        }
+        return data
     }
+}
+
+private struct ArticleExtractResponse: Decodable {
+    let query: Query?
+    struct Query: Decodable { let pages: [Page] }
+    struct Page: Decodable {
+        let extract: String?
+        let missing: Bool?
+    }
+}
+
+/// The Wikidata Query Service's JSON results format.
+private struct SPARQLResponse: Decodable {
+    struct Value: Decodable { let value: String }
+    struct Results: Decodable { let bindings: [[String: Value]] }
+    let results: Results
 }

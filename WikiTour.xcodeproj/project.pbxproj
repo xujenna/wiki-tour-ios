@@ -5,8 +5,37 @@
 	};
 	objectVersion = 56;
 	objects = {
+000000000000000000000100 = {isa = PBXNativeTarget; name = WikiTourTests; productName = WikiTourTests; productReference = 000000000000000000000101; productType = "com.apple.product-type.bundle.unit-test"; buildConfigurationList = 000000000000000000000109; buildPhases = (000000000000000000000104,000000000000000000000105,000000000000000000000106,); dependencies = (000000000000000000000107,); buildRules = (); };
+000000000000000000000101 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = WikiTourTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+000000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikiTourTests.swift; sourceTree = "<group>"; };
+00000000000000000000010C = {isa = PBXGroup; children = (000000000000000000000102,); path = WikiTourTests; sourceTree = "<group>"; };
+000000000000000000000103 = {isa = PBXBuildFile; fileRef = 000000000000000000000102; };
+000000000000000000000104 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (000000000000000000000103,); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000105 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000106 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000107 = {isa = PBXTargetDependency; target = 00000000000000000000001F; targetProxy = 000000000000000000000108; };
+000000000000000000000108 = {isa = PBXContainerItemProxy; containerPortal = 000000000000000000000001; proxyType = 1; remoteGlobalIDString = 00000000000000000000001F; remoteInfo = WikiTour; };
+000000000000000000000109 = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000010A,00000000000000000000010B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+00000000000000000000010A = {isa = XCBuildConfiguration; name = Debug; buildSettings = {GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.xujenna.WikiTourTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WikiTour.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WikiTour"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; }; };
+00000000000000000000010B = {isa = XCBuildConfiguration; name = Release; buildSettings = {GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.xujenna.WikiTourTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WikiTour.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WikiTour";}; };
+000000000000000000000120 = {isa = PBXNativeTarget; name = WikiTourUITests; productName = WikiTourUITests; productReference = 000000000000000000000121; productType = "com.apple.product-type.bundle.ui-testing"; buildConfigurationList = 000000000000000000000129; buildPhases = (000000000000000000000124,000000000000000000000125,000000000000000000000126,); dependencies = (000000000000000000000127,); buildRules = (); };
+000000000000000000000121 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = WikiTourUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+000000000000000000000122 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikiTourUITests.swift; sourceTree = "<group>"; };
+00000000000000000000012C = {isa = PBXGroup; children = (000000000000000000000122,); path = WikiTourUITests; sourceTree = "<group>"; };
+000000000000000000000123 = {isa = PBXBuildFile; fileRef = 000000000000000000000122; };
+000000000000000000000124 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (000000000000000000000123,); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000125 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000126 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000127 = {isa = PBXTargetDependency; target = 00000000000000000000001F; targetProxy = 000000000000000000000128; };
+000000000000000000000128 = {isa = PBXContainerItemProxy; containerPortal = 000000000000000000000001; proxyType = 1; remoteGlobalIDString = 00000000000000000000001F; remoteInfo = WikiTour; };
+000000000000000000000129 = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000012A,00000000000000000000012B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+00000000000000000000012A = {isa = XCBuildConfiguration; name = Debug; buildSettings = {GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.xujenna.WikiTourUITests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; TEST_TARGET_NAME = WikiTour; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; }; };
+00000000000000000000012B = {isa = XCBuildConfiguration; name = Release; buildSettings = {GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.xujenna.WikiTourUITests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; TEST_TARGET_NAME = WikiTour;}; };
 
 /* Begin PBXBuildFile section */
+000000000000000000000200 = {isa = PBXBuildFile; productRef = 000000000000000000000201; };
+000000000000000000000203 = {isa = PBXBuildFile; fileRef = 000000000000000000000204; };
+000000000000000000000205 = {isa = PBXBuildFile; fileRef = 000000000000000000000206; };
 		000000000000000000000013 /* WikiTourApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000A /* WikiTourApp.swift */; };
 		000000000000000000000014 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* ContentView.swift */; };
 		000000000000000000000015 /* TourMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* TourMapView.swift */; };
@@ -19,6 +48,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+000000000000000000000204 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+000000000000000000000206 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		000000000000000000000009 /* WikiTour.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WikiTour.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		00000000000000000000000A /* WikiTourApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikiTourApp.swift; sourceTree = "<group>"; };
 		00000000000000000000000B /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -35,17 +66,21 @@
 		00000000000000000000001E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = (
+			files = (000000000000000000000200,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
+000000000000000000000201 = {isa = XCSwiftPackageProductDependency; package = 000000000000000000000202; productName = FirebaseCore; };
+000000000000000000000202 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git"; requirement = {kind = exactVersion; version = 12.19.1; }; };
 
 /* Begin PBXGroup section */
 		000000000000000000000002 /* = */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000004 /* WikiTour */,
+				00000000000000000000010C,
+00000000000000000000012C,
+000000000000000000000004 /* WikiTour */,
 				000000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -53,7 +88,9 @@
 		000000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000009 /* WikiTour.app */,
+				000000000000000000000101,
+000000000000000000000121,
+000000000000000000000009 /* WikiTour.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -67,6 +104,8 @@
 				000000000000000000000006 /* Services */,
 				000000000000000000000007 /* ViewModels */,
 				000000000000000000000008 /* Views */,
+                000000000000000000000204,
+                000000000000000000000206,
 				000000000000000000000012 /* Assets.xcassets */,
 			);
 			path = WikiTour;
@@ -122,6 +161,7 @@
 			dependencies = (
 			);
 			name = WikiTour;
+            packageProductDependencies = (000000000000000000000201,);
 			productName = WikiTour;
 			productReference = 000000000000000000000009 /* WikiTour.app */;
 			productType = "com.apple.product-type.application";
@@ -153,7 +193,11 @@
 			productRefGroup = 000000000000000000000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+            packageReferences = (000000000000000000000202,);
 			targets = (
+000000000000000000000100,
+000000000000000000000120,
+
 				00000000000000000000001F /* WikiTour */,
 			);
 		};
@@ -164,6 +208,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                000000000000000000000203,
+                000000000000000000000205,
 				00000000000000000000001B /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -195,10 +241,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = MR89V3D6JC;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "WikiTour uses your location to find nearby historical landmarks for your walking tour.";
+				INFOPLIST_KEY_CFBundleDisplayName = "Walking Tours";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Walking Tours uses your location to find nearby historical landmarks for your walking tour.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -224,10 +272,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = MR89V3D6JC;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "WikiTour uses your location to find nearby historical landmarks for your walking tour.";
+				INFOPLIST_KEY_CFBundleDisplayName = "Walking Tours";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Walking Tours uses your location to find nearby historical landmarks for your walking tour.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
