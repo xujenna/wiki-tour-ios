@@ -21,7 +21,7 @@ final class WikiTourUITests: XCTestCase {
         dismissPlace(app)
         app.buttons["savedWalks"].tap()
         XCTAssertTrue(app.staticTexts["0 saved walks"].waitForExistence(timeout: 5))
-        app.buttons["savedPlaces"].tap()
+        tapWhenSettled(app.buttons["savedPlaces"])
         XCTAssertTrue(app.staticTexts["Saved places"].waitForExistence(timeout: 5))
         capture(app, name: "Saved places")
         XCTAssertTrue(app.buttons.containing(.staticText, identifier: "14th Regiment Armory").firstMatch.exists)
@@ -35,7 +35,7 @@ final class WikiTourUITests: XCTestCase {
         dismissPlace(app)
         app.buttons["savedWalks"].tap()
         XCTAssertTrue(app.staticTexts["0 saved walks"].waitForExistence(timeout: 5))
-        app.buttons["savedPlaces"].tap()
+        tapWhenSettled(app.buttons["savedPlaces"])
         XCTAssertTrue(app.staticTexts["A walk of your own"].waitForExistence(timeout: 5))
     }
 
@@ -45,24 +45,22 @@ final class WikiTourUITests: XCTestCase {
         app.launchArguments = ["--preview", "--ui-testing", "--reset-saved", "--saved-preview"]
         app.launch()
         app.buttons["savedWalks"].tap()
-        app.buttons["savedPlaces"].tap()
-        let start = app.buttons["startWalking"]
-        XCTAssertTrue(start.waitForExistence(timeout: 10))
-        start.tap()
+        tapWhenSettled(app.buttons["savedPlaces"])
+        tapStartWalking(app)
         let title = app.staticTexts["currentStopTitle"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertEqual(title.label, "14th Regiment Armory")
         capture(app, name: "Walking tour")
-        XCTAssertFalse(app.buttons["← Back"].isEnabled)
+        XCTAssertFalse(app.buttons["← BACK"].isEnabled)
         app.buttons["nextStop"].tap()
         XCTAssertEqual(title.label, "Grand Prospect Hall")
         XCTAssertFalse(app.staticTexts["No photo available"].exists)
         capture(app, name: "Emoji-only photo placeholder")
-        app.buttons["← Back"].tap()
+        app.buttons["← BACK"].tap()
         XCTAssertEqual(title.label, "14th Regiment Armory")
         app.buttons["nextStop"].tap()
         // The last stop offers more places instead of ending the walk.
-        XCTAssertEqual(app.buttons["nextStop"].label, "Keep going →")
+        XCTAssertEqual(app.buttons["nextStop"].label, "KEEP GOING →")
         app.buttons["nextStop"].tap()
         let next = app.buttons["nextStop"]
         XCTAssertTrue(next.waitForExistence(timeout: 10))
@@ -87,10 +85,8 @@ final class WikiTourUITests: XCTestCase {
         app.launchArguments = ["--preview", "--ui-testing", "--reset-saved", "--saved-preview"]
         app.launch()
         app.buttons["savedWalks"].tap()
-        app.buttons["savedPlaces"].tap()
-        let start = app.buttons["startWalking"]
-        XCTAssertTrue(start.waitForExistence(timeout: 10))
-        start.tap()
+        tapWhenSettled(app.buttons["savedPlaces"])
+        tapStartWalking(app)
         XCTAssertTrue(app.buttons["nextStop"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["tourSummary"].exists)
         let surface = app.otherElements["edgeToEdgeSheet"].firstMatch
@@ -152,9 +148,8 @@ final class WikiTourUITests: XCTestCase {
         app.launchArguments = ["--preview", "--ui-testing", "--reset-saved", "--saved-preview"]
         app.launch()
         app.buttons["savedWalks"].tap()
-        app.buttons["savedPlaces"].tap()
-        XCTAssertTrue(app.buttons["startWalking"].waitForExistence(timeout: 10))
-        app.buttons["startWalking"].tap()
+        tapWhenSettled(app.buttons["savedPlaces"])
+        tapStartWalking(app)
         XCTAssertTrue(app.staticTexts["currentStopTitle"].waitForExistence(timeout: 5))
         app.buttons["saveWalk"].tap()
         XCTAssertTrue(app.buttons["Unsave walk"].waitForExistence(timeout: 5))
@@ -177,9 +172,8 @@ final class WikiTourUITests: XCTestCase {
         app.launch()
         app.buttons["savedWalks"].tap()
         XCTAssertTrue(app.staticTexts["0 saved walks"].waitForExistence(timeout: 5))
-        app.buttons["savedPlaces"].tap()
-        XCTAssertTrue(app.buttons["startWalking"].waitForExistence(timeout: 10))
-        app.buttons["startWalking"].tap()
+        tapWhenSettled(app.buttons["savedPlaces"])
+        tapStartWalking(app)
         XCTAssertTrue(app.staticTexts["currentStopTitle"].waitForExistence(timeout: 5))
         app.buttons["saveWalk"].tap()
         XCTAssertEqual(app.buttons["saveWalk"].label, "Unsave walk")
@@ -207,6 +201,19 @@ final class WikiTourUITests: XCTestCase {
         XCTAssertEqual(panel.frame.width, app.frame.width, accuracy: 1)
         XCTAssertEqual(panel.frame.maxY, app.frame.maxY, accuracy: 1)
         capture(app, name: "Tour summary covers bottom safe area")
+    }
+
+    /// Sheets slide up; tapping before they settle lands where the button used to be.
+    @MainActor
+    private func tapWhenSettled(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element.waitForExistence(timeout: 5), file: file, line: line)
+        for _ in 0..<20 where !element.isHittable { usleep(100_000) }
+        element.tap()
+    }
+
+    @MainActor
+    private func tapStartWalking(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        tapWhenSettled(app.buttons["startWalking"], file: file, line: line)
     }
 
     @MainActor

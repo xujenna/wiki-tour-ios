@@ -12,23 +12,20 @@ struct LoadingView: View {
         ZStack {
             Color("LaunchBackground")
             SkyVideo()
-            HalftoneOverlay(color: Color(red: 0.1, green: 0.16, blue: 0.32).opacity(0.22), spacing: 6, dotSize: 2.2)
-            Image("LoadingShoe")
-                .resizable()
-                .frame(width: 240, height: 240)
+            HalftoneOverlay(color: Color(red: 0.1, green: 0.16, blue: 0.32).opacity(0.22), spacing: 4, dotSize: 1.4)
+            Image("LoadingShoe") // 52 pt, its natural size: the largest that stays sharp.
+                .frame(width: 52, height: 52)
                 .accessibilityHidden(true)
-            VStack(spacing: 12) {
-                ProgressView().tint(.white).controlSize(.large)
+            // A regular spinner inline with the caption, as in the app's other loading states.
+            HStack(spacing: 12) {
+                ProgressView().tint(.white)
                 Text(caption)
-                    .font(.custom(BundledFonts.textBold, size: 17))
-                    .tracking(0.17)
+                    .mockFont(BundledFonts.textBold, size: 17)
                     .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
             }
             .padding(.horizontal, 32)
             // Below the shoe, which is centered exactly as on the launch screen.
-            .offset(y: 120 + 56)
+            .offset(y: 26 + 56)
         }
         .ignoresSafeArea()
         .fontDesign(nil)

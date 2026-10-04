@@ -10,11 +10,27 @@ import CoreImage.CIFilterBuiltins
 enum BundledFonts {
     static let script = "Borel-Regular"
     static let display = "BrandonGrotesque-Bold"
+    static let displayBlack = "BrandonGrotesque-Black"
+    static let textRegular = "BrandonText-Regular"
     static let textBold = "BrandonText-Bold"
     static let textBlack = "BrandonText-Black"
 
+    /// Borel lacks some accented letters (č, ć, š, ž). Drawing those in another font looks broken,
+    /// so they are written as their base letter, the way people often type them ("Vracar").
+    static func scriptSafe(_ text: String) -> String {
+        guard let font = UIFont(name: script, size: 12) else { return text }
+        let ctFont = font as CTFont
+        return String(text.map { character -> Character in
+            let utf16 = Array(String(character).utf16)
+            var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+            if CTFontGetGlyphsForCharacters(ctFont, utf16, &glyphs, utf16.count) { return character }
+            let base = String(character).applyingTransform(.stripDiacritics, reverse: false) ?? String(character)
+            return base.count == 1 ? Character(base) : character
+        })
+    }
+
     static func register() {
-        for name in [script, display, textBold, textBlack] {
+        for name in [script, display, displayBlack, textRegular, textBold, textBlack] {
             guard let data = NSDataAsset(name: name)?.data as CFData?,
                   let provider = CGDataProvider(data: data),
                   let font = CGFont(provider) else { continue }
@@ -23,8 +39,94 @@ enum BundledFonts {
     }
 }
 
-/// The postcard photo treatment from the Figma mock (node 23:387), which lightens and flattens the
-/// photo so the lettering stays legible. Figma's adjustments (contrast −27%, saturation −50%,
+extension Font {
+    /// Brandon Text in place of the system font, scaling with Dynamic Type like the style it replaces.
+    static func brandon(_ size: CGFloat, bold: Bool = false, relativeTo style: Font.TextStyle = .body) -> Font {
+        .custom(bold ? BundledFonts.textBold : BundledFonts.textRegular, size: size, relativeTo: style)
+    }
+}
+
+/// Text at an exact line height, for mock specs tighter than the font's own: Brandon Grotesque's
+/// natural leading is about 1.43× its size (22.9 pt at 16 pt), and SwiftUI can only add space
+/// between lines, never remove it. A UILabel with a fixed line height matches the spec.
+struct MockText: UIViewRepresentable {
+    let text: String
+    let font: String
+    let size: CGFloat
+    let lineHeight: CGFloat
+    var color: UIColor = UIColor(red: 46 / 255, green: 46 / 255, blue: 46 / 255, alpha: 1)
+    var alignment: NSTextAlignment = .natural
+    var lineLimit = 0
+    var shadowRadius: CGFloat = 0
+    var identifier: String?
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        return label
+    }
+
+    func updateUIView(_ label: UILabel, context: Context) {
+        let uiFont = UIFont(name: font, size: size) ?? .systemFont(ofSize: size, weight: .bold)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = lineHeight
+        paragraph.maximumLineHeight = lineHeight
+        paragraph.alignment = alignment
+        paragraph.lineBreakMode = .byWordWrapping
+        label.attributedText = NSAttributedString(string: text, attributes: [
+            .font: uiFont, .kern: size * 0.01, .foregroundColor: color, .paragraphStyle: paragraph,
+            // Centers the glyphs in the tighter line.
+            .baselineOffset: (lineHeight - uiFont.lineHeight) / 4])
+        label.numberOfLines = lineLimit
+        label.lineBreakMode = .byTruncatingTail
+        label.layer.shadowColor = UIColor.black.cgColor
+        label.layer.shadowRadius = shadowRadius
+        label.layer.shadowOpacity = shadowRadius > 0 ? 1 : 0
+        label.layer.shadowOffset = .zero
+        label.accessibilityIdentifier = identifier
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
+        let width = proposal.width ?? .greatestFiniteMagnitude
+        let fitted = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: proposal.width ?? fitted.width, height: fitted.height)
+    }
+}
+
+/// An empty state in Brandon; the system's ContentUnavailableView always uses the system font.
+struct EmptyStateView: View {
+    let title: String
+    let systemImage: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: systemImage).font(.system(size: 40)).foregroundStyle(.secondary)
+            Text(title).mockFont(BundledFonts.displayBlack, size: 22)
+            Text(message).mockFont(BundledFonts.textRegular, size: 15, lineHeight: 20)
+                .foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40).padding(.horizontal, 24)
+    }
+}
+
+extension View {
+    /// A bundled font at a mock's size, 1% letter spacing, and (optionally) its line height. The app's
+    /// rounded font design is cleared, since it would otherwise replace the custom font.
+    func mockFont(_ name: String, size: CGFloat, lineHeight: CGFloat? = nil) -> some View {
+        let natural = UIFont(name: name, size: size)?.lineHeight ?? size * 1.2
+        return fontDesign(nil)
+            .font(.custom(name, size: size))
+            .tracking(size * 0.01)
+            .lineSpacing(lineHeight.map { max(0, $0 - natural) } ?? 0)
+    }
+}
+
+/// The postcard photo treatment from the Figma mock (node 36:489): black and white, lightened and
+/// flattened so the lettering stays legible. Figma's adjustments (saturation −100%, contrast −47%,
 /// tint +18%, highlights −97%, shadows −100%) were matched with Core Image against Figma's own
 /// export of the same photo; the remaining difference averages about 7 levels out of 255.
 enum PostcardPhotoStyle {
@@ -34,30 +136,31 @@ enum PostcardPhotoStyle {
         guard let input = CIImage(image: image) else { return image }
         let color = CIFilter.colorControls()
         color.inputImage = input
-        color.saturation = 0.5
+        color.saturation = 0
+        color.contrast = 0.65
         let tone = CIFilter.highlightShadowAdjust()
         tone.inputImage = color.outputImage
-        tone.highlightAmount = 1
+        tone.highlightAmount = 0.2
         tone.shadowAmount = 0.2
         let matrix = CIFilter.colorMatrix()
         matrix.inputImage = tone.outputImage
-        matrix.rVector = CIVector(x: 0.767, y: 0, z: 0, w: 0)
-        matrix.gVector = CIVector(x: 0, y: 0.739, z: 0, w: 0)
-        matrix.bVector = CIVector(x: 0, y: 0, z: 0.740, w: 0)
-        matrix.biasVector = CIVector(x: 0.042, y: 0.029, z: 0.044, w: 0)
-        guard let output = matrix.outputImage,
+        matrix.rVector = CIVector(x: 1.792, y: 0, z: 0, w: 0)
+        matrix.gVector = CIVector(x: 0, y: 1.792, z: 0, w: 0)
+        matrix.bVector = CIVector(x: 0, y: 0, z: 1.792, w: 0)
+        matrix.biasVector = CIVector(x: -0.334, y: -0.334, z: -0.334, w: 0)
+        guard let output = matrix.outputImage?.cropped(to: input.extent),
               let cgImage = context.createCGImage(output, from: input.extent) else { return image }
         return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }
 
 /// The web app's subtle halftone: two offset grids of dots, forming a diagonal lattice. The postcard
-/// uses the app's accent pink so it does not wash out white lettering; the loading screen uses dark
-/// blue dots like the app icon's sky.
+/// uses dark gray dots so they do not wash out the white lettering on its black-and-white photo; the
+/// loading screen uses dark blue dots like the app icon's sky.
 struct HalftoneOverlay: View {
-    var color: Color = TourStyle.accent.opacity(0.35)
-    var spacing: CGFloat = 4
-    var dotSize: CGFloat = 1.5
+    var color: Color = Color(white: 0.18).opacity(0.35)
+    var spacing: CGFloat = 3
+    var dotSize: CGFloat = 1
 
     var body: some View {
         Canvas { context, size in
@@ -87,7 +190,8 @@ struct PostcardView: View {
     let onDismiss: () -> Void
 
     @State private var photo: UIImage?
-    private static let paper = Color(red: 1, green: 249 / 255, blue: 249 / 255)
+    /// The mock's warm off-white (#F1EFEE) for the card and the lettering.
+    private static let paper = Color(red: 241 / 255, green: 239 / 255, blue: 238 / 255)
     private static let ink = Color(red: 46 / 255, green: 46 / 255, blue: 46 / 255)
 
     var body: some View {
@@ -153,8 +257,6 @@ struct PostcardView: View {
                 Image(uiImage: photo).resizable().scaledToFill()
                     .frame(width: 362, height: 226)
             }
-            // The mock's 10% light-blue wash, then the web app's halftone.
-            Color(red: 0.613, green: 0.794, blue: 1).opacity(0.1)
             HalftoneOverlay()
         }
         .clipped()
@@ -183,8 +285,9 @@ struct PostcardView: View {
 
     /// Borel with a larger first letter, as in the mock; long names shrink to fit.
     private var cityTitle: some View {
-        let first = city.prefix(1)
-        let rest = city.dropFirst()
+        let title = BundledFonts.scriptSafe(city)
+        let first = title.prefix(1)
+        let rest = title.dropFirst()
         return (Text(first).font(.custom(BundledFonts.script, size: 80))
                 + Text(rest).font(.custom(BundledFonts.script, size: 70)))
             .tracking(0.7)

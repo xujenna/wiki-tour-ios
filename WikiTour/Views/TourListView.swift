@@ -11,11 +11,8 @@ struct TourListView: View {
         NavigationStack {
             List {
                 if viewModel.savedLandmarks.isEmpty {
-                    ContentUnavailableView {
-                        Label("A walk of your own", systemImage: "bookmark")
-                    } description: {
-                        Text("Tap a place on the map, then bookmark it. Your saved places become your walking tour.")
-                    }
+                    EmptyStateView(title: "A walk of your own", systemImage: "bookmark",
+                                   message: "Tap a place on the map, then bookmark it. Your saved places become your walking tour.")
                     .listRowBackground(Color.clear)
                 } else {
                     Section {
@@ -24,9 +21,9 @@ struct TourListView: View {
                                 HStack(spacing: 12) {
                                     LandmarkEmoji(landmark: landmark, size: 28)
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(landmark.title).font(.headline)
+                                        Text(landmark.title).font(.brandon(17, bold: true, relativeTo: .headline))
                                         if !landmark.formattedDistance.isEmpty {
-                                            Text(landmark.formattedDistance + " away").font(.caption)
+                                            Text(landmark.formattedDistance + " away").font(.brandon(12, relativeTo: .caption))
                                         }
                                     }
                                     Spacer()
@@ -48,10 +45,10 @@ struct TourListView: View {
                             Text(error)
                             Button("Try directions again") { viewModel.prepareRoute() }
                         } else {
-                            Text(viewModel.routeSummary).font(.subheadline.weight(.semibold))
+                            Text(viewModel.routeSummary).font(.brandon(15, bold: true, relativeTo: .subheadline))
                             if viewModel.userLocation == nil {
                                 Text("This walk starts at your first saved place. Enable location to include the walk from where you are.")
-                                    .font(.caption)
+                                    .font(.brandon(12, relativeTo: .caption))
                             }
                             Button(action: startWalk) {
                                 Label("Start walking", systemImage: "figure.walk")
@@ -74,7 +71,6 @@ struct TourListView: View {
                 }
             }
         }
-        .fontDesign(.rounded)
         .environment(\.colorScheme, .light)
     }
 }
@@ -92,35 +88,40 @@ struct WalkingTourView: View {
 
             if !isCollapsed, let stop = viewModel.currentStop {
                 ScrollView {
+                    // Figma 25:397: photo 15 pt under the summary, the stop's name 15 pt under the
+                    // photo, and the description 10 pt under the name.
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(stop.title).font(.system(.title2, design: .rounded, weight: .heavy))
-                            .accessibilityIdentifier("currentStopTitle")
                         LandmarkPhoto(landmark: stop).frame(height: 204)
-                        LandmarkDescription(landmark: stop, viewModel: viewModel)
+                            .padding(.top, 7)
+                        // 24 pt on a 22 pt line, tighter than Brandon's own leading.
+                        MockText(text: stop.title, font: BundledFonts.displayBlack, size: 24, lineHeight: 22,
+                                 identifier: "currentStopTitle")
+                            .padding(.top, 5)
+                        LandmarkDescription(landmark: stop, viewModel: viewModel, compact: true)
                         HStack {
                             if let url = stop.wikipediaURL {
                                 Link("Wikipedia", destination: url)
                             }
                             Spacer()
                             Button("Directions") { openDirections(to: stop) }
-                        }.font(.caption.weight(.semibold)).padding(.top, 8)
+                        }.font(.brandon(12, bold: true, relativeTo: .caption)).padding(.top, 8)
                     }.padding(.horizontal, 20).padding(.bottom, 12)
                 }
                 .id(stop.id)
                 if let message = viewModel.extendMessage, isLastStop {
-                    Text(message).font(.system(size: 14, design: .rounded))
+                    Text(message).mockFont(BundledFonts.textRegular, size: 14, lineHeight: 20)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .padding(.horizontal, 20)
                 }
                 HStack {
                     let isFirstStop = viewModel.currentStopIndex == 0
-                    Button("← Back") { viewModel.currentStopIndex -= 1 }
+                    Button("← BACK") { viewModel.currentStopIndex -= 1 }
                         .disabled(isFirstStop)
                         // The sheet's ink color overrides the system's dimmed disabled style.
                         .opacity(isFirstStop ? 0.3 : 1)
                     Spacer()
                     if viewModel.isExtending {
-                        HStack(spacing: 8) { ProgressView(); Text("Finding more…") }
+                        HStack(spacing: 8) { ProgressView(); Text("FINDING MORE…") }
                     } else {
                         Button(nextLabel) {
                             if !isLastStop { viewModel.currentStopIndex += 1 }
@@ -131,10 +132,10 @@ struct WalkingTourView: View {
                         .accessibilityValue("Stop \(viewModel.currentStopIndex + 1) of \(viewModel.routeStops.count)")
                     }
                 }
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .mockFont(BundledFonts.displayBlack, size: 16, lineHeight: 22)
                 .padding(.horizontal, 20).padding(.vertical, 12)
             } else if !isCollapsed {
-                ContentUnavailableView("Choose your stops", systemImage: "bookmark", description: Text("Save places on the map to make a walking tour."))
+                EmptyStateView(title: "Choose your stops", systemImage: "bookmark", message: "Save places on the map to make a walking tour.")
             }
         }
         .foregroundStyle(TourStyle.ink)
@@ -148,7 +149,7 @@ struct WalkingTourView: View {
 
     /// The last stop of the current tour offers "Keep going"; a saved walk still ends with Finish.
     private var nextLabel: String {
-        !isLastStop ? "Next →" : viewModel.canKeepGoing ? "Keep going →" : "Finish ✓"
+        !isLastStop ? "NEXT →" : viewModel.canKeepGoing ? "KEEP GOING →" : "FINISH ✓"
     }
 
     private func openDirections(to landmark: Landmark) {
@@ -169,14 +170,15 @@ struct SavedWalksView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("\(viewModel.savedWalks.count) saved \(viewModel.savedWalks.count == 1 ? "walk" : "walks")")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .mockFont(BundledFonts.textBold, size: 14)
                 Spacer()
-                Button("Done", action: onClose).font(.subheadline.weight(.semibold))
+                Button("Done", action: onClose).font(.brandon(15, bold: true, relativeTo: .subheadline))
             }.padding(.horizontal, 20).padding(.top, 22).padding(.bottom, 16)
             ScrollView {
                 LazyVStack(spacing: 20) {
                     if viewModel.savedWalks.isEmpty {
-                        ContentUnavailableView("Your walks belong here", systemImage: "heart", description: Text("Bookmark places to build a walk, then tap the heart on your walking tour to save it."))
+                        EmptyStateView(title: "Your walks belong here", systemImage: "heart",
+                                       message: "Bookmark places to build a walk, then tap the heart on your walking tour to save it.")
                     }
                     ForEach(viewModel.savedWalks) { walk in
                         Button { openWalk(walk) } label: {
@@ -184,7 +186,7 @@ struct SavedWalksView: View {
                                 if let cover = walk.cover { LandmarkPhoto(landmark: cover) }
                                 LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
                                 Text(walk.name)
-                                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                                    .mockFont(BundledFonts.displayBlack, size: 32)
                                     .foregroundStyle(.white).shadow(color: .black.opacity(0.8), radius: 10)
                                     .padding(10)
                             }
@@ -250,8 +252,8 @@ struct WalkSummaryHeader: View {
     }
 
     private var summaryText: some View {
-        Text(summary).font(.system(size: 14, weight: .semibold, design: .rounded))
-            .tracking(0.14).lineLimit(2).minimumScaleFactor(0.85)
+        Text(summary).mockFont(BundledFonts.textBold, size: 14)
+            .lineLimit(2).minimumScaleFactor(0.85)
             .padding(.leading, 10).padding(.trailing, 4)
     }
 }

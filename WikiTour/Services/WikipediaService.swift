@@ -234,19 +234,41 @@ struct PlaceNames: Equatable {
         return names(from: response.address ?? [:])
     }
 
-    /// The neighborhood leads, with its city (or New York City borough) below; with no neighborhood,
-    /// the city leads, with its US state or country below.
+    /// The most local usable name leads (neighborhood, then district), with its city (or New York City
+    /// borough) below; with neither, the city leads, with its US state or country below.
     static func names(from address: [String: String]) -> PlaceNames? {
-        let city = address["city"] ?? address["town"] ?? address["village"] ?? address["municipality"]
+        let rawCity = address["city"] ?? address["town"] ?? address["village"] ?? address["municipality"]
+        // Some cities list a district's administrative name as the city ("Vracar Urban Municipality",
+        // with Belgrade only as the county "City of Belgrade"); use the real city then.
+        let cityIsDistrict = rawCity?.localizedCaseInsensitiveContains("municipality") == true
+        let city = (cityIsDistrict ? address["county"].map(cleaned) : nil) ?? rawCity.map(cleaned)
         let isNewYorkCity = city == "New York" || city == "City of New York"
         let borough = isNewYorkCity ? address["suburb"] ?? address["borough"] : nil
         let place = borough ?? city
         let region = address["country_code"] == "us" ? address["state"] : address["country"]
-        if let neighborhood = address["neighbourhood"] ?? address["quarter"], neighborhood != place {
-            return PlaceNames(title: neighborhood, subtitle: place ?? region)
-        }
+        let districtName = cityIsDistrict ? rawCity.map(cleaned) : nil
+        let local = [address["neighbourhood"], address["quarter"], borough == nil ? address["suburb"] : nil, districtName]
+            .compactMap { $0.map(cleaned) }
+            .first { isUsable($0) && $0 != place }
+        if let local { return PlaceNames(title: local, subtitle: place ?? region) }
         if let place { return PlaceNames(title: place, subtitle: region) }
         return nil
+    }
+
+    /// Drops administrative wording that nobody uses in conversation.
+    static func cleaned(_ name: String) -> String {
+        var result = name
+        for prefix in ["City of "] where result.hasPrefix(prefix) { result.removeFirst(prefix.count) }
+        for suffix in [" Urban Municipality", " City Municipality", " Municipality"] where result.hasSuffix(suffix) {
+            result.removeLast(suffix.count)
+        }
+        return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Skips numbered housing blocks ("Блок 24") and names in a script the English map labels don't use.
+    static func isUsable(_ name: String) -> Bool {
+        !name.isEmpty && name.rangeOfCharacter(from: .decimalDigits) == nil
+            && name.range(of: "[\\p{L}&&[^\\p{Latin}]]", options: .regularExpression) == nil
     }
 
     private struct NominatimResponse: Decodable { let address: [String: String]? }

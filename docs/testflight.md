@@ -2,7 +2,7 @@
 
 - Bundle ID: `com.xujenna.wikitour`
 - Apple developer team: `MR89V3D6JC`
-- Current version: 1.0 (11) — uploaded October 4, 2026; supersedes build 10
+- Current version: 1.0 (14) — uploaded October 4, 2026; supersedes build 13
 - Firebase project: `wiki-tour-ios-xujenna`; iOS app ID `1:607056516365:ios:3e2ad18e46012e2344cc44`
 - Saved places and walks persist locally. FirebaseCore is configured; this build does not include authentication or cloud synchronization.
 
@@ -98,3 +98,23 @@ Validation: 23 unit tests and 6 UI tests passed on this code. Signed archive: `/
 - Walk view zooms out just enough to show where each leg starts. Historic districts are no longer tour stops. The Search this area button matches the map buttons.
 
 Validation: 27 unit tests and 8 UI tests passed on this code. Signed archive: `/private/tmp/WikiTour-TestFlight-v11.xcarchive` (log `/private/tmp/wiki-tour-archive-v11.log`). Uploaded October 4, 2026 at 15:46 EDT (log `/private/tmp/wiki-tour-upload-v11.log`). Brandon Grotesque and Brandon Text are commercial fonts bundled at the owner's request for this unpublished, internal-only app.
+
+## Build 12: stable map labels and cleaner place names
+
+- Which landmarks get a marker and label depends only on zoom, never on panning: places have a fixed ranking (selected, tour stops, then nearest the searched spot) and collisions are resolved across all places. Zooming in calls out more. A label hides only while its text overlaps the map buttons, without changing any other label.
+- Postcard names drop administrative wording ("Vracar Urban Municipality" becomes "Vracar", with Belgrade as the city), skip numbered or non-Latin neighborhood names, and write letters the script font lacks (č, ć, š, ž) as their base letter.
+
+Validation: 28 unit tests and 8 UI tests passed on this code. Signed archive: `/private/tmp/WikiTour-TestFlight-v12.xcarchive` (log `/private/tmp/wiki-tour-archive-v12.log`). Uploaded October 4, 2026 at 17:10 EDT (log `/private/tmp/wiki-tour-upload-v12.log`).
+
+## Build 13: finer halftones
+
+Build 12 plus smaller halftone dots: the postcard's pink halftone is now 1 pt dots on a 3 pt grid (was 1.5 on 4), and the loading screen's is 1.4 pt on 4 pt (was 2.2 on 6). The postcard and loading-screen UI tests passed. Archive `/private/tmp/WikiTour-TestFlight-v13.xcarchive`; upload log `/private/tmp/wiki-tour-upload-v13.log`.
+
+## Build 14: Brandon throughout, black-and-white postcard, no ferries
+
+- Brandon replaces the system font everywhere: the walk sheet matches Figma 25:397 (Brandon Text summary and description, Brandon Grotesque Black title and uppercase Back/Next, title under the photo); marker labels match 38:507 (Brandon Grotesque Black 16 on a 20 pt line). Tight line heights use a fixed-line-height label, since SwiftUI cannot set leading below a font's natural line height.
+- Postcard in black and white with off-white card (Figma 36:489) and a dark-gray halftone.
+- Suggested tours and Keep going skip stops Apple's walking directions can only reach by ferry.
+- Loading screen: sharp 52 pt shoe, regular inline spinner, no caption shadow. Saved places opens taller so Start walking is fully visible.
+
+Validation: 29 unit tests and 8 UI tests passed. Archive `/private/tmp/WikiTour-TestFlight-v14.xcarchive` (log `/private/tmp/wiki-tour-archive-v14.log`); uploaded 18:39 EDT (log `/private/tmp/wiki-tour-upload-v14.log`). All five Brandon fonts confirmed in the archived asset catalog.

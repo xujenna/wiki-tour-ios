@@ -12,7 +12,7 @@ struct LandmarkDetailView: View {
                     .frame(height: 226)
                     .overlay(alignment: .bottomLeading) {
                         Text(landmark.title)
-                            .font(.system(size: 30, weight: .bold, design: .rounded)).tracking(0.3)
+                            .mockFont(BundledFonts.displayBlack, size: 30)
                             .foregroundStyle(.white)
                             .shadow(color: .black.opacity(0.8), radius: 10)
                             .padding(.horizontal, 20).padding(.bottom, 10)
@@ -33,12 +33,12 @@ struct LandmarkDetailView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     if !landmark.formattedDistance.isEmpty {
                         Text(landmark.formattedDistance + " away")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded)).tracking(0.14)
+                            .mockFont(BundledFonts.textBold, size: 14, lineHeight: 24)
                     }
                     LandmarkDescription(landmark: landmark, viewModel: viewModel)
                     if let url = landmark.wikipediaURL {
                         Link("Read more on Wikipedia", destination: url)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded)).tracking(0.14)
+                            .mockFont(BundledFonts.textBold, size: 14)
                             .foregroundStyle(TourStyle.ink)
                             .padding(.vertical, 8)
                     }
@@ -101,10 +101,24 @@ struct LandmarkEmoji: View {
     }
 }
 
+private struct DescriptionStyle: ViewModifier {
+    let compact: Bool
+    func body(content: Content) -> some View {
+        if compact {
+            content.mockFont(BundledFonts.textRegular, size: 14, lineHeight: 20)
+        } else {
+            content.mockFont(BundledFonts.textRegular, size: 18, lineHeight: 24)
+        }
+    }
+}
+
 /// Both map cards and tour stops share the same on-demand introduction and session cache.
 struct LandmarkDescription: View {
     let landmark: Landmark
     let viewModel: TourViewModel
+    /// Walk stops use the walk-sheet mock's 14 pt Brandon Text (Figma 25:397); place cards use the
+    /// place-card mock's 18 pt size and 24 pt line height (Figma 4:72), also in Brandon Text.
+    var compact = false
     @State private var isLoading = false
     @State private var failed = false
     @State private var retry = 0
@@ -128,14 +142,13 @@ struct LandmarkDescription: View {
                         .textSelection(.enabled)
                 }
             }
-            // One body style for place cards and walk stops (Figma 4:72 and 4:181).
-            .font(.system(size: 18, design: .rounded)).tracking(0.18).lineSpacing(3)
+            .modifier(DescriptionStyle(compact: compact))
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("landmarkDescription")
             if isLoading {
-                ProgressView("Loading more about this place…").font(.caption)
+                ProgressView("Loading more about this place…").font(.brandon(12, relativeTo: .caption))
             } else if failed {
-                Button("Retry loading introduction") { retry += 1 }.font(.caption)
+                Button("Retry loading introduction") { retry += 1 }.font(.brandon(12, bold: true, relativeTo: .caption))
             }
         }
         .task(id: "\(landmark.id)-\(retry)") {

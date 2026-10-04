@@ -8,7 +8,8 @@ struct ContentView: View {
         GeometryReader { geometry in
             TourMapView(viewModel: viewModel)
                 .environment(\.tourBottomInset, geometry.safeAreaInsets.bottom)
-                .fontDesign(.rounded)
+                // Brandon Text is the app's default font; views set specific Brandon styles.
+                .font(.brandon(17))
                 .tint(.accentColor)
                 .task { viewModel.start() }
         }

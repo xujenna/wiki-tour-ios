@@ -4,7 +4,8 @@
 # loading screen fall back to the system font.
 set -e
 cd "$(dirname "$0")/.."
-for font in "Brandon Grotesque/BrandonGrotesque-Bold" "Brandon Text/BrandonText-Bold" "Brandon Text/BrandonText-Black"; do
+for font in "Brandon Grotesque/BrandonGrotesque-Bold" "Brandon Grotesque/BrandonGrotesque-Black" \
+            "Brandon Text/BrandonText-Regular" "Brandon Text/BrandonText-Bold" "Brandon Text/BrandonText-Black"; do
   name=$(basename "$font")
   source="/Library/Fonts/$font.otf"
   [ -f "$source" ] || source="$HOME/Library/Fonts/$name.otf"

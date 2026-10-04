@@ -300,6 +300,26 @@ final class WikiTourTests: XCTestCase {
         XCTAssertFalse(model.canKeepGoing)
     }
 
+    func testAutomaticToursSkipStopsOnlyReachableByFerry() async throws {
+        let origin = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        let places = placesEast(4, spacing: 150)
+        let island = places[2] // Governors Island: Apple's walking directions need a ferry.
+        let model = TourViewModel(defaults: defaults) { from, to in
+            WalkingLeg(polyline: MKPolyline(coordinates: [from, to], count: 2), distance: 100, duration: 60,
+                       usesFerry: to.longitude == island.longitude)
+        }
+        model.userLocation = origin
+        model.suggestWalk(from: places, near: origin)
+        try await waitForRoute(model)
+        XCTAssertEqual(model.routeStops.map(\.title), ["Place 0", "Place 1", "Place 3"])
+        XCTAssertFalse(model.savedLandmarks.contains { $0.id == island.id }, "The saved tour drops it too")
+        XCTAssertEqual(model.routeLines.count, 3, "The route goes from Place 1 straight to Place 3")
+        // A place the user adds themselves is kept, ferry or not.
+        model.toggleSaved(island)
+        try await waitForRoute(model)
+        XCTAssertTrue(model.routeStops.contains { $0.id == island.id })
+    }
+
     func testSuggestedWalkDropsFinalStopsWhenRealDirectionsRunLong() async throws {
         let origin = CLLocationCoordinate2D(latitude: 0, longitude: 0)
         // Real directions report 20 minutes a leg, far more than the estimate for these short hops.
@@ -392,6 +412,18 @@ final class WikiTourTests: XCTestCase {
         XCTAssertEqual(PlaceNames.names(from: ["town": "Great Bend", "state": "Kansas", "country_code": "us"]),
                        PlaceNames(title: "Great Bend", subtitle: "Kansas"))
         XCTAssertNil(PlaceNames.names(from: [:]))
+        // Belgrade: an administrative district name as the city, and Cyrillic block numbers.
+        XCTAssertEqual(PlaceNames.names(from: ["suburb": "Vračar", "city": "Vracar Urban Municipality",
+                                               "county": "City of Belgrade", "country": "Serbia", "country_code": "rs"]),
+                       PlaceNames(title: "Vračar", subtitle: "Belgrade"))
+        XCTAssertEqual(PlaceNames.names(from: ["city": "Vracar Urban Municipality", "county": "City of Belgrade",
+                                               "country": "Serbia", "country_code": "rs"]),
+                       PlaceNames(title: "Vracar", subtitle: "Belgrade"))
+        XCTAssertEqual(PlaceNames.names(from: ["neighbourhood": "Блок 24", "suburb": "New Belgrade", "city": "Belgrade",
+                                               "country": "Serbia", "country_code": "rs"]),
+                       PlaceNames(title: "New Belgrade", subtitle: "Belgrade"))
+        XCTAssertEqual(PlaceNames.names(from: ["suburb": "Brooklyn", "city": "New York", "state": "New York", "country_code": "us"]),
+                       PlaceNames(title: "Brooklyn", subtitle: "New York"), "A borough alone is the place, with its state")
         let middle = TourViewModel.centroid(of: placesEast(3, spacing: 100))
         XCTAssertEqual(middle?.longitude ?? 0, 200 / 111_320, accuracy: 1e-9)
         XCTAssertNil(TourViewModel.centroid(of: []))
@@ -407,7 +439,10 @@ final class WikiTourTests: XCTestCase {
 
     func testPostcardFontsRegister() {
         BundledFonts.register()
-        for name in [BundledFonts.script, BundledFonts.display, BundledFonts.textBold, BundledFonts.textBlack] {
+        XCTAssertEqual(BundledFonts.scriptSafe("Vračar"), "Vracar", "Borel has no č")
+        XCTAssertEqual(BundledFonts.scriptSafe("Café Procope"), "Café Procope", "Borel has é")
+        for name in [BundledFonts.script, BundledFonts.display, BundledFonts.displayBlack, BundledFonts.textRegular,
+                     BundledFonts.textBold, BundledFonts.textBlack] {
             XCTAssertNotNil(NSDataAsset(name: name), "missing data asset \(name)")
             XCTAssertNotNil(UIFont(name: name, size: 12), "font not registered: \(name)")
         }
@@ -584,6 +619,50 @@ final class WikiTourTests: XCTestCase {
                                                viewport: .init(width: 402, height: 874))
         XCTAssertEqual(selected.first?.id, dot.id)
         XCTAssertEqual(selected.first?.markerSize, 60)
+    }
+
+    func testPanningNeverChangesWhichPlacesAreCalledOut() {
+        // A dense grid of places, like central Belgrade.
+        let base = CLLocationCoordinate2D(latitude: 44.81, longitude: 20.46)
+        let places = (0..<120).map { index in
+            Landmark(title: "Place \(index)", coordinate: .init(latitude: base.latitude + Double(index / 12) * 0.0009,
+                                                               longitude: base.longitude + Double(index % 12) * 0.0011), description: "")
+        }
+        let span = MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.009)
+        func layout(_ center: CLLocationCoordinate2D, span: MKCoordinateSpan = span) -> [String: String] {
+            let placed = LandmarkMapLayout.place(places, savedIDs: [], selectedID: nil, region: .init(center: center, span: span),
+                                                 viewport: .init(width: 402, height: 874), anchor: base)
+            return Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.isDot ? "dot" : $0.showsTitle ? ($0.labelOnLeft ? "left" : "right") : "plain") })
+        }
+        let here = layout(.init(latitude: 44.814, longitude: 20.465))
+        // Pan, with a span that differs slightly as real pans do.
+        let there = layout(.init(latitude: 44.8155, longitude: 20.4675), span: .init(latitudeDelta: 0.01201, longitudeDelta: 0.009))
+        let shared = Set(here.keys).intersection(there.keys)
+        XCTAssertGreaterThan(shared.count, 30)
+        for id in shared { XCTAssertEqual(here[id], there[id], "\(id) changed while panning") }
+        XCTAssertTrue(here.values.contains("dot"), "A crowded view still shrinks some places to dots")
+        // A label under the map buttons hides while it is there, without changing any other place.
+        let buttons = CGRect(x: 322, y: 0, width: 80, height: 190)
+        let center = CLLocationCoordinate2D(latitude: 44.814, longitude: 20.465)
+        let open = LandmarkMapLayout.place(places, savedIDs: [], selectedID: nil, region: .init(center: center, span: span),
+                                           viewport: .init(width: 402, height: 874), anchor: base)
+        let covered = LandmarkMapLayout.place(places, savedIDs: [], selectedID: nil, region: .init(center: center, span: span),
+                                              viewport: .init(width: 402, height: 874), anchor: base, hidingLabelsUnder: [buttons])
+        let hidden = zip(open, covered).filter { $0.showsTitle && !$1.showsTitle }
+        XCTAssertTrue(hidden.allSatisfy { $0.0.bounds.intersects(buttons) })
+        // A short label beside the buttons, but not under them, stays visible.
+        XCTAssertLessThan(LandmarkMapLayout.labelWidth("Books"), 60)
+        XCTAssertEqual(LandmarkMapLayout.labelWidth("Old First Reformed Church of Brooklyn and a very long name"), 115)
+        XCTAssertEqual(open.map(\.id), covered.map(\.id))
+        for (before, after) in zip(open, covered) where !before.bounds.intersects(buttons) {
+            XCTAssertEqual(before.showsTitle, after.showsTitle, "\(before.id) changed although it is clear of the buttons")
+        }
+        // Zooming in calls out more places.
+        let zoomed = layout(.init(latitude: 44.814, longitude: 20.465), span: .init(latitudeDelta: 0.004, longitudeDelta: 0.003))
+        let labelledHere = Set(here.filter { $0.value == "left" || $0.value == "right" }.keys)
+        let labelledZoomed = Set(zoomed.filter { $0.value == "left" || $0.value == "right" }.keys)
+        let comparable = Set(zoomed.keys)
+        XCTAssertGreaterThan(labelledZoomed.count, labelledHere.intersection(comparable).count)
     }
 
     func testCrowdedSavedMarkersCannotBeHiddenByCollisionFiltering() {

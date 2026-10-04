@@ -471,21 +471,29 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         let origin = tourStartLocation ?? savedLandmarks[0].coordinate
         let ordered = startsInRouteOrder ? savedLandmarks : Self.orderedStops(savedLandmarks, from: origin)
         let mode = draftMode
-        // Only a suggested walk is shortened; places the user picked are always kept.
+        // Only a suggested walk is shortened, or loses stops only reachable by ferry; places the user
+        // picked are always kept.
         let trimsToLimit = draftIsSuggested && mode == .walking
+        let skipsFerryStops = draftIsSuggested
         routeTask = Task {
             // A short debounce avoids sending a directions request for every rapid bookmark tap.
             do {
                 try await Task.sleep(for: .milliseconds(350))
                 var source = origin
                 var legs: [WalkingLeg?] = []
+                var reachable: [Landmark] = []
                 for stop in ordered {
                     try Task.checkCancellation()
-                    legs.append(Self.distance(source, stop.coordinate) > 5
-                                ? try await cachedLeg(from: source, to: stop.coordinate, mode: mode) : nil)
+                    let leg = Self.distance(source, stop.coordinate) > 5
+                        ? try await cachedLeg(from: source, to: stop.coordinate, mode: mode) : nil
+                    // Skip a stop only reachable by ferry; the next leg starts from the previous stop.
+                    if skipsFerryStops, leg?.usesFerry == true { continue }
+                    legs.append(leg)
+                    reachable.append(stop)
                     source = stop.coordinate
                 }
                 guard !Task.isCancelled, routeID == requestID else { return }
+                let ordered = reachable
                 var kept = ordered.count
                 // Estimates can undercount real streets; drop final stops until the walk fits.
                 while trimsToLimit, kept > 1,
@@ -499,7 +507,8 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
                 routeDuration = keptLegs.reduce(0) { $0 + $1.duration }
                 // Refit once the real roads are known; they can swing wider than the stops.
                 if draftIsSuggested { routeFitRevision += 1 }
-                if kept < ordered.count {
+                // Keep the saved tour in step with stops that were trimmed or skipped for a ferry.
+                if routeStops.count < savedLandmarks.count {
                     let keptIDs = Set(routeStops.map(\.id))
                     savedLandmarks.removeAll { !keptIDs.contains($0.id) }
                     persistSaved()
@@ -548,13 +557,22 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
                 }
                 var source = last.coordinate
                 var legs: [WalkingLeg] = []
+                var reachable: [Landmark] = []
                 for stop in additions {
                     if Self.distance(source, stop.coordinate) > 5 {
-                        legs.append(try await cachedLeg(from: source, to: stop.coordinate, mode: mode))
+                        let leg = try await cachedLeg(from: source, to: stop.coordinate, mode: mode)
+                        if leg.usesFerry { continue } // Never continue a tour by ferry.
+                        legs.append(leg)
                     }
+                    reachable.append(stop)
                     source = stop.coordinate
                 }
                 guard routeID == requestID else { return }
+                additions = reachable
+                guard !additions.isEmpty else {
+                    extendMessage = "That's everything nearby."
+                    return
+                }
                 let nextIndex = routeStops.count
                 routeStops += additions
                 routeLines += legs.map(\.polyline)
@@ -695,7 +713,12 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         activeDirections = directions
         let response = try await directions.calculate()
         guard let route = response.routes.first else { throw URLError(.badServerResponse) }
-        return WalkingLeg(polyline: route.polyline, distance: route.distance, duration: route.expectedTravelTime)
+        // A ferry shows up as an advisory notice and as a step in another mode of transport.
+        let usesFerry = route.advisoryNotices.contains { $0.localizedCaseInsensitiveContains("ferry") }
+            || route.steps.contains { $0.distance > 0 && $0.transportType != request.transportType }
+            || route.steps.contains { $0.instructions.localizedCaseInsensitiveContains("ferry") }
+        return WalkingLeg(polyline: route.polyline, distance: route.distance, duration: route.expectedTravelTime,
+                          usesFerry: usesFerry)
     }
 
     /// Nearest-neighbour order, then local improvements until none helps: reverse any stretch that
@@ -783,6 +806,8 @@ struct WalkingLeg {
     let polyline: MKPolyline
     let distance: CLLocationDistance
     let duration: TimeInterval
+    /// Apple's directions can cross water by ferry ("Ferry required."), which no walking tour should.
+    var usesFerry = false
 }
 
 /// A walk is a snapshot: its ordered stops and walking route survive draft edits and relaunches.

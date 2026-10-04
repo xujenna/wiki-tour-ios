@@ -23,6 +23,8 @@ struct TourMapView: View {
     @State private var visibleRegion = MKCoordinateRegion(center: .init(latitude: 40.666, longitude: -73.984), span: .init(latitudeDelta: 0.024, longitudeDelta: 0.018))
     @State private var viewport = CGSize(width: 402, height: 874)
     @State private var hasMoved = false
+    /// Where the heart and location buttons sit; labels hide only while they overlap it.
+    @State private var buttonsFrame: CGRect = .zero
     @State private var cameraDistance: Double = 4800
     @State private var cameraHeading: Double = 0
     /// Where the map last zoomed to fit a tour. Moving away from the search or from this automatic
@@ -100,7 +102,8 @@ struct TourMapView: View {
         }
         .overlay(alignment: .bottom) {
             if let selected = sheet {
-                EdgeToEdgeSheet(initialFraction: ["walk", "walks"].contains(selected.id) ? 0.62 : 0.52,
+                // Saved places opens as tall as the walk, so Start walking is fully on screen.
+                EdgeToEdgeSheet(initialFraction: ["walk", "walks", "saved"].contains(selected.id) ? 0.62 : 0.52,
                                 allowsCollapsed: selected.id == "walk", onClose: closeSheet) {
                     switch selected {
                     case .place(let landmark):
@@ -174,7 +177,7 @@ struct TourMapView: View {
                 } label: {
                     // Matches the heart and location buttons: dark translucent fill, faint white outline.
                     Label("Search this area", systemImage: "magnifyingglass")
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .font(.brandon(15, bold: true, relativeTo: .subheadline))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .frame(height: 40)
@@ -212,6 +215,8 @@ struct TourMapView: View {
             }
             .buttonStyle(.plain)
             .shadow(color: .black.opacity(0.8), radius: 2)
+            // The map fills the screen, so global coordinates are map coordinates.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { buttonsFrame = $0 }
         }
         .environment(\.colorScheme, .light)
     }
@@ -232,7 +237,7 @@ struct TourMapView: View {
     @ViewBuilder private var bottomPanel: some View {
         if let error = viewModel.error {
             VStack(alignment: .leading, spacing: 10) {
-                Text(error).font(.subheadline)
+                Text(error).font(.brandon(15, relativeTo: .subheadline))
                 HStack {
                     Button("Search this area") { viewModel.search(near: visibleCenter, startsNewTour: true) }
                     Spacer()
@@ -241,14 +246,14 @@ struct TourMapView: View {
                     } else {
                         Button("Retry") { viewModel.locate() }
                     }
-                }.font(.subheadline.bold())
+                }.font(.brandon(15, bold: true, relativeTo: .subheadline))
             }
             .padding(20).frame(maxWidth: .infinity).background(TourStyle.paper)
             .foregroundStyle(TourStyle.ink)
         } else if viewModel.isBusy {
             HStack(spacing: 12) {
                 ProgressView().tint(TourStyle.ink)
-                Text(viewModel.statusMessage).font(.subheadline)
+                Text(viewModel.statusMessage).font(.brandon(15, relativeTo: .subheadline))
                 Spacer()
             }.padding(20).background(TourStyle.paper).foregroundStyle(TourStyle.ink)
         } else if !viewModel.savedLandmarks.isEmpty {
@@ -265,9 +270,9 @@ struct TourMapView: View {
             .environment(\.colorScheme, .light)
         } else if viewModel.landmarks.isEmpty {
             VStack(spacing: 8) {
-                Text("A little curiosity goes a long way.").font(.headline)
-                Text(viewModel.statusMessage).font(.subheadline)
-                Button("Search this area") { viewModel.search(near: visibleCenter, startsNewTour: true) }.font(.subheadline.bold())
+                Text("A little curiosity goes a long way.").font(.brandon(17, bold: true, relativeTo: .headline))
+                Text(viewModel.statusMessage).font(.brandon(15, relativeTo: .subheadline))
+                Button("Search this area") { viewModel.search(near: visibleCenter, startsNewTour: true) }.font(.brandon(15, bold: true, relativeTo: .subheadline))
             }.padding(20).frame(maxWidth: .infinity).background(TourStyle.paper).foregroundStyle(TourStyle.ink)
         }
     }
@@ -275,8 +280,9 @@ struct TourMapView: View {
     private var placedLandmarks: [PlacedLandmark] {
         LandmarkMapLayout.place(viewModel.mapLandmarks, savedIDs: viewModel.mapSavedIDs,
                                 selectedID: activeLandmarkID, region: visibleRegion, viewport: viewport,
-                                excludedRects: [CGRect(x: viewport.width - 80, y: 0, width: 80, height: 190)],
-                                camera: (cameraHeading, cameraDistance * Self.visibleHeightPerDistance / max(1, viewport.height)))
+                                camera: (cameraHeading, cameraDistance * Self.visibleHeightPerDistance / max(1, viewport.height)),
+                                anchor: viewModel.searchCenter,
+                                hidingLabelsUnder: buttonsFrame.isEmpty ? [] : [buttonsFrame])
             .sorted { $0.isDot && !$1.isDot } // Render full markers above dots.
     }
 
@@ -416,8 +422,6 @@ struct LandmarkMarker: View {
     var labelOnLeft = false
     var showsTitle = true
     var isDot = false
-    @ScaledMetric(relativeTo: .caption) private var labelSize = 14
-    @ScaledMetric(relativeTo: .body) private var activeLabelSize = 16
 
     var body: some View {
         Group {
@@ -460,15 +464,11 @@ struct LandmarkMarker: View {
     }
 
     private var title: some View {
-        Text(landmark.title)
-            .font(.system(size: isSelected ? activeLabelSize : labelSize, weight: .bold, design: .rounded))
-            .tracking(isSelected ? 0.16 : 0.14)
-            .foregroundStyle(.white)
-            .shadow(color: .black, radius: 3)
-            .multilineTextAlignment(labelOnLeft ? .trailing : .leading)
-            .lineLimit(2)
-            .truncationMode(.tail)
+        // Figma 38:507: Brandon Grotesque Black 16 pt on a 20 pt line, white, with a 3 pt black shadow.
+        MockText(text: landmark.title, font: BundledFonts.displayBlack, size: 16, lineHeight: 20, color: .white,
+                 alignment: labelOnLeft ? .right : .left, lineLimit: 2, shadowRadius: 3)
             .frame(width: isSelected ? 122 : 115, alignment: labelOnLeft ? .trailing : .leading)
+            .accessibilityHidden(true) // The marker button already carries the place's name.
     }
 }
 
@@ -494,61 +494,86 @@ struct PlacedLandmark: Identifiable {
 
 /// Reserve screen space for labels as the map zoom changes. Nearby places that
 /// cannot fit a label keep an emoji marker; hidden unsaved markers become small dots.
+/// Decides which landmarks get a full marker and label, which get a plain marker, and which shrink to
+/// a dot. The result depends only on the zoom level, never on where the map is panned: places are
+/// ranked by a fixed priority (selected, saved or on the tour, then nearest the searched spot), and
+/// collisions are worked out across every landmark, on screen or not. Panning therefore never makes
+/// labels appear or disappear; zooming in frees room, so more places are called out.
+@MainActor
 enum LandmarkMapLayout {
+    /// Width of a marker label's text, at most the 115 pt label column.
+    static func labelWidth(_ title: String) -> CGFloat {
+        if let cached = labelWidths[title] { return cached }
+        let font = UIFont(name: BundledFonts.displayBlack, size: 16) ?? .systemFont(ofSize: 16, weight: .black)
+        // A name that fits on one line uses its own width; one that wraps fills the column.
+        let oneLine = NSAttributedString(string: title, attributes: [.font: font, .kern: 0.16]).size().width
+        let width = min(115, ceil(oneLine))
+        labelWidths[title] = width
+        return width
+    }
+    private static var labelWidths: [String: CGFloat] = [:]
+
     /// `camera` describes a rotated map: its heading and meters per screen point. A rotated map's
     /// region is only the bounding box of the screen, so it cannot be used to project points.
+    /// `anchor` orders unsaved places by distance from it, typically the searched spot.
     static func place(_ landmarks: [Landmark], savedIDs: Set<String>, selectedID: String?,
-                      region: MKCoordinateRegion, viewport: CGSize, excludedRects: [CGRect] = [],
-                      camera: (heading: Double, metersPerPoint: Double)? = nil) -> [PlacedLandmark] {
-        guard region.span.latitudeDelta > 0, region.span.longitudeDelta > 0 else { return [] }
+                      region: MKCoordinateRegion, viewport: CGSize,
+                      camera: (heading: Double, metersPerPoint: Double)? = nil,
+                      anchor: CLLocationCoordinate2D? = nil,
+                      hidingLabelsUnder covered: [CGRect] = []) -> [PlacedLandmark] {
+        guard region.span.latitudeDelta > 0, region.span.longitudeDelta > 0, viewport.height > 0 else { return [] }
+        // Snap the scale to quarter zoom steps so tiny span differences between pans cannot
+        // change which labels fit.
+        func snapped(_ value: Double) -> Double { pow(2, (log2(value) * 4).rounded() / 4) }
+        let rotated = camera.map { abs($0.heading) > 0.5 && $0.metersPerPoint > 0 } ?? false
+        let metersPerPoint = snapped(rotated ? camera!.metersPerPoint
+                                             : region.span.latitudeDelta * 111_320 / Double(viewport.height))
+        let heading = rotated ? camera!.heading * .pi / 180 : 0
+        let center = region.center
+        let metersPerDegreeLongitude = 111_320 * cos(center.latitude * .pi / 180)
         func project(_ landmark: Landmark) -> CGPoint {
-            if let camera, abs(camera.heading) > 0.5, camera.metersPerPoint > 0 {
-                let east = (landmark.longitude - region.center.longitude) * 111_320 * cos(region.center.latitude * .pi / 180)
-                let north = (landmark.latitude - region.center.latitude) * 111_320
-                let heading = camera.heading * .pi / 180
-                let right = east * cos(heading) - north * sin(heading)
-                let up = east * sin(heading) + north * cos(heading)
-                return CGPoint(x: viewport.width / 2 + right / camera.metersPerPoint,
-                               y: viewport.height / 2 - up / camera.metersPerPoint)
-            }
-            return CGPoint(x: (0.5 + (landmark.longitude - region.center.longitude) / region.span.longitudeDelta) * viewport.width,
-                           y: (0.5 - (landmark.latitude - region.center.latitude) / region.span.latitudeDelta) * viewport.height)
+            let east = (landmark.longitude - center.longitude) * metersPerDegreeLongitude
+            let north = (landmark.latitude - center.latitude) * 111_320
+            let right = east * cos(heading) - north * sin(heading)
+            let up = east * sin(heading) + north * cos(heading)
+            return CGPoint(x: viewport.width / 2 + right / metersPerPoint, y: viewport.height / 2 - up / metersPerPoint)
+        }
+        let rankFrom = anchor ?? center
+        func rankDistance(_ landmark: Landmark) -> Double {
+            pow(landmark.latitude - rankFrom.latitude, 2) + pow(landmark.longitude - rankFrom.longitude, 2)
         }
         let ordered = landmarks.sorted { a, b in
             let pa = a.id == selectedID ? 2 : savedIDs.contains(a.id) ? 1 : 0
             let pb = b.id == selectedID ? 2 : savedIDs.contains(b.id) ? 1 : 0
             if pa != pb { return pa > pb }
-            let da = pow(a.latitude - region.center.latitude, 2) + pow(a.longitude - region.center.longitude, 2)
-            let db = pow(b.latitude - region.center.latitude, 2) + pow(b.longitude - region.center.longitude, 2)
+            let da = rankDistance(a), db = rankDistance(b)
             return da == db ? a.id < b.id : da < db
         }
         var placed: [PlacedLandmark] = []
         var dots: [PlacedLandmark] = []
-        let canvas = CGRect(origin: .zero, size: viewport)
         // Reserve every saved stop before placing any labels. Even two saved
         // stops at the same coordinate must remain available as map annotations.
         let protectedMarkers: [(id: String, bounds: CGRect)] = ordered.compactMap { landmark in
             guard savedIDs.contains(landmark.id) || landmark.id == selectedID else { return nil }
             let point = project(landmark)
-            let x = point.x, y = point.y
             let bounds = landmark.id == selectedID
-                ? CGRect(x: x - 30, y: y - 72, width: 60, height: 77)
-                : CGRect(x: x - 20, y: y - 20, width: 40, height: 40)
+                ? CGRect(x: point.x - 30, y: point.y - 72, width: 60, height: 77)
+                : CGRect(x: point.x - 20, y: point.y - 20, width: 40, height: 40)
             return (landmark.id, bounds)
+        }
+        func blocked(_ bounds: CGRect, by id: String) -> Bool {
+            protectedMarkers.contains { $0.id != id && $0.bounds.insetBy(dx: -6, dy: -6).intersects(bounds) }
+                || placed.contains { $0.bounds.insetBy(dx: -6, dy: -6).intersects(bounds) }
         }
         for landmark in ordered {
             let point = project(landmark)
             let x = point.x, y = point.y
-            guard canvas.insetBy(dx: -20, dy: -20).contains(CGPoint(x: x, y: y)) else { continue }
             if landmark.id == selectedID {
                 let marker = CGRect(x: x - 30, y: y - 72, width: 60, height: 77)
                 var selection = PlacedLandmark(landmark: landmark, labelOnLeft: false, showsTitle: false, bounds: marker, markerSize: 60)
                 for left in [false, true] {
-                    let bounds = CGRect(x: left ? marker.minX - 128 : marker.minX,
-                                        y: marker.minY, width: 188, height: 77)
-                    if canvas.contains(bounds),
-                       !excludedRects.contains(where: { $0.intersects(bounds) }),
-                       !protectedMarkers.contains(where: { $0.id != landmark.id && $0.bounds.insetBy(dx: -6, dy: -6).intersects(bounds) }) {
+                    let bounds = CGRect(x: left ? marker.minX - 128 : marker.minX, y: marker.minY, width: 188, height: 77)
+                    if !protectedMarkers.contains(where: { $0.id != landmark.id && $0.bounds.insetBy(dx: -6, dy: -6).intersects(bounds) }) {
                         selection = PlacedLandmark(landmark: landmark, labelOnLeft: left, showsTitle: true, bounds: bounds, markerSize: 60)
                         break
                     }
@@ -559,28 +584,39 @@ enum LandmarkMapLayout {
             let size: CGFloat = 40
             let marker = CGRect(x: x - size / 2, y: y - size / 2, width: size, height: size)
             var choice: PlacedLandmark?
-            for left in [x > viewport.width / 2, x <= viewport.width / 2] {
+            // Labels prefer the right; the side never depends on where the place is on screen.
+            for left in [false, true] {
                 let bounds = CGRect(x: left ? marker.minX - 121 : marker.minX, y: marker.minY - 3,
                                     width: size + 121, height: size + 6)
-                if canvas.contains(bounds),
-                   !protectedMarkers.contains(where: { $0.id != landmark.id && $0.bounds.insetBy(dx: -6, dy: -6).intersects(bounds) }),
-                   !excludedRects.contains(where: { $0.intersects(bounds) }), !placed.contains(where: { $0.bounds.insetBy(dx: -6, dy: -6).intersects(bounds) }) {
+                if !blocked(bounds, by: landmark.id) {
                     choice = PlacedLandmark(landmark: landmark, labelOnLeft: left, showsTitle: true, bounds: bounds, markerSize: size)
                     break
                 }
             }
             if let choice { placed.append(choice) }
-            else if savedIDs.contains(landmark.id) || (
-                !excludedRects.contains(where: { $0.intersects(marker) }) &&
-                !protectedMarkers.contains(where: { $0.bounds.insetBy(dx: -6, dy: -6).intersects(marker) }) &&
-                !placed.contains(where: { $0.bounds.insetBy(dx: -6, dy: -6).intersects(marker) })) {
+            else if savedIDs.contains(landmark.id) || !blocked(marker, by: landmark.id) {
                 placed.append(PlacedLandmark(landmark: landmark, labelOnLeft: false, showsTitle: false, bounds: marker, markerSize: size))
             } else {
                 dots.append(PlacedLandmark(landmark: landmark, labelOnLeft: false, showsTitle: false,
                                            bounds: CGRect(x: x - 5, y: y - 5, width: 10, height: 10), markerSize: 10))
             }
         }
+        // Only what is on or near the screen is drawn; the decisions above already covered the rest.
+        let visible = CGRect(origin: .zero, size: viewport).insetBy(dx: -80, dy: -80)
+        // A label passing under the map buttons is hidden only while it is there. This is display
+        // only: it never changes which other places are called out.
+        let shown = placed.map { item -> PlacedLandmark in
+            guard item.showsTitle, item.markerSize != 60 else { return item }
+            // The label's actual text, not the full width reserved for long names.
+            let text = labelWidth(item.landmark.title)
+            let visibleBounds = CGRect(x: item.labelOnLeft ? item.bounds.maxX - item.markerSize - 6 - text : item.bounds.minX,
+                                       y: item.bounds.minY, width: item.markerSize + 6 + text, height: item.bounds.height)
+            guard covered.contains(where: { $0.intersects(visibleBounds) }) else { return item }
+            let marker = CGRect(x: item.labelOnLeft ? item.bounds.maxX - item.markerSize : item.bounds.minX,
+                                y: item.bounds.minY + 3, width: item.markerSize, height: item.markerSize)
+            return PlacedLandmark(landmark: item.landmark, labelOnLeft: false, showsTitle: false, bounds: marker, markerSize: item.markerSize)
+        }
         // Dots do not reserve room that would otherwise fit a full landmark marker.
-        return placed + dots
+        return (shown + dots).filter { visible.intersects($0.bounds) }
     }
 }
