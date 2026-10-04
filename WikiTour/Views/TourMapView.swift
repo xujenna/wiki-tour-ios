@@ -76,7 +76,17 @@ struct TourMapView: View {
         }
         .overlay(alignment: .top) { mapControls.padding(.horizontal, 16).padding(.top, 8) }
         .overlay(alignment: .bottom) {
-            if sheet == nil && showsBottomPanel {
+            if sheet == nil && viewModel.showsPostcard {
+                PostcardView(photoLandmark: viewModel.postcardLandmark,
+                             city: viewModel.postcardCity ?? viewModel.locationName,
+                             region: viewModel.postcardRegion ?? "",
+                             summary: viewModel.routeSummary,
+                             onStart: startWalk,
+                             onDismiss: { withAnimation { viewModel.dismissPostcard() } })
+                    // Clears the Apple Maps logo and Legal link, which must stay visible.
+                    .padding(.bottom, 40)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if sheet == nil && showsBottomPanel {
                 GeometryReader { geometry in
                     bottomPanel
                         .padding(.bottom, max(bottomInset, geometry.safeAreaInsets.bottom))
@@ -119,6 +129,7 @@ struct TourMapView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: sheet?.id)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: viewModel.showsPostcard)
         .onChange(of: viewModel.cameraRevision) { _, _ in
             fittedCenter = nil
             if case .place(let landmark) = sheet { focus(on: landmark.coordinate) }
@@ -135,6 +146,13 @@ struct TourMapView: View {
                 position = .camera(MapCamera(centerCoordinate: visibleCenter, distance: cameraDistance, heading: 0, pitch: 0))
             }
         }
+        .overlay {
+            if viewModel.showsLoadingScreen {
+                LoadingView(caption: viewModel.loadingCaption)
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: viewModel.showsLoadingScreen)
         #if DEBUG
         .task {
             guard ProcessInfo.processInfo.arguments.contains("--preview"),
@@ -150,15 +168,23 @@ struct TourMapView: View {
         HStack(alignment: .top) {
             if hasMoved && !viewModel.isBusy && sheet == nil {
                 Button {
-                    viewModel.search(near: visibleCenter)
+                    viewModel.search(near: visibleCenter, startsNewTour: true)
                     hasMoved = false
                     fittedCenter = nil
                 } label: {
+                    // Matches the heart and location buttons: dark translucent fill, faint white outline.
                     Label("Search this area", systemImage: "magnifyingglass")
                         .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 40)
+                        .background(.black.opacity(0.5), in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.3), lineWidth: 1))
+                        .frame(minHeight: 44)
+                        .contentShape(Capsule())
                 }
-                .buttonStyle(.borderedProminent).tint(TourStyle.paper).foregroundStyle(TourStyle.ink)
-                .clipShape(Capsule())
+                .buttonStyle(.plain)
+                .shadow(color: .black.opacity(0.8), radius: 2)
             }
             Spacer()
             VStack(spacing: 11) {
@@ -208,7 +234,7 @@ struct TourMapView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(error).font(.subheadline)
                 HStack {
-                    Button("Search this area") { viewModel.search(near: visibleCenter) }
+                    Button("Search this area") { viewModel.search(near: visibleCenter, startsNewTour: true) }
                     Spacer()
                     if viewModel.authorizationStatus == .denied {
                         Link("Settings", destination: URL(string: UIApplication.openSettingsURLString)!)
@@ -241,7 +267,7 @@ struct TourMapView: View {
             VStack(spacing: 8) {
                 Text("A little curiosity goes a long way.").font(.headline)
                 Text(viewModel.statusMessage).font(.subheadline)
-                Button("Search this area") { viewModel.search(near: visibleCenter) }.font(.subheadline.bold())
+                Button("Search this area") { viewModel.search(near: visibleCenter, startsNewTour: true) }.font(.subheadline.bold())
             }.padding(20).frame(maxWidth: .infinity).background(TourStyle.paper).foregroundStyle(TourStyle.ink)
         }
     }
@@ -260,6 +286,7 @@ struct TourMapView: View {
     }
 
     private func startWalk() {
+        viewModel.dismissPostcard()
         viewModel.currentStopIndex = 0
         sheet = .walk
         showCurrentStop()
@@ -271,17 +298,20 @@ struct TourMapView: View {
         let roadPoints = viewModel.routeLines.flatMap { line in
             (0..<line.pointCount).map { line.points()[$0].coordinate }
         }
+        // The tour's start: the user, or the searched spot for a tour of somewhere else.
         let coordinates = viewModel.savedLandmarks.map(\.coordinate) + roadPoints
-            + [viewModel.userLocation].compactMap { $0 }
+            + [viewModel.tourStartLocation].compactMap { $0 }
         guard let first = coordinates.first else { return }
         var minLat = first.latitude, maxLat = first.latitude, minLon = first.longitude, maxLon = first.longitude
         for coordinate in coordinates {
             minLat = min(minLat, coordinate.latitude); maxLat = max(maxLat, coordinate.latitude)
             minLon = min(minLon, coordinate.longitude); maxLon = max(maxLon, coordinate.longitude)
         }
-        // Extra room below keeps the southernmost stop clear of the tour bar.
-        let latitudeDelta = max(0.006, (maxLat - minLat) * 1.5)
-        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2 - latitudeDelta * 0.06,
+        // Keep the tour above whatever covers the bottom of the map: the welcome postcard covers
+        // about the lower 38% of a new suggestion's map, the tour bar only a sliver.
+        let covered = viewModel.draftIsSuggested ? 0.38 : 0.1
+        let latitudeDelta = max(0.006, (maxLat - minLat) * 1.25 / (1 - covered))
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2 - latitudeDelta * covered / 2,
                                             longitude: (minLon + maxLon) / 2)
         fittedCenter = center
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.6)) {
@@ -296,26 +326,52 @@ struct TourMapView: View {
     private static let streetLevelDistance = 780 / visibleHeightPerDistance
 
     /// Turns the map toward the current stop, like heading-up navigation: the heading runs from the
-    /// previous stop (or the user, for the first stop) to this one. Zooms in to street level unless
-    /// the user is already closer, and keeps the stop above the walk sheet.
+    /// previous stop (or the user, for the first stop) to this one. Zooms to street level, or out just
+    /// far enough to also show where the leg starts and the user, so the way to the stop is visible.
     private func showCurrentStop() {
         guard let stop = viewModel.currentStop else { return }
         let index = viewModel.currentStopIndex
         let stops = viewModel.routeStops
-        let previous = index > 0 ? stops[index - 1].coordinate : viewModel.userLocation
+        let previous = index > 0 ? stops[index - 1].coordinate : viewModel.tourStartLocation
         var heading = 0.0
         if let previous, TourViewModel.distance(previous, stop.coordinate) > 20 {
             heading = Self.bearing(from: previous, to: stop.coordinate)
         } else if stops.indices.contains(index + 1) {
             heading = Self.bearing(from: stop.coordinate, to: stops[index + 1].coordinate)
         }
-        let distance = min(cameraDistance, Self.streetLevelDistance)
-        // A quarter of the visible height toward the bottom of the rotated screen.
-        let center = Self.coordinate(from: stop.coordinate, bearing: heading + 180,
-                                     meters: distance * Self.visibleHeightPerDistance * 0.25)
+        // The user counts only when nearby; a location in another city must not zoom out the map.
+        let user = viewModel.userLocation.flatMap { TourViewModel.distance($0, stop.coordinate) < 3000 ? $0 : nil }
+        let camera = Self.walkCamera(stop: stop.coordinate, heading: heading, showing: [previous, user].compactMap { $0 },
+                                     minimumDistance: min(cameraDistance, Self.streetLevelDistance),
+                                     aspect: viewport.width / max(1, viewport.height))
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.5)) {
-            position = .camera(MapCamera(centerCoordinate: center, distance: distance, heading: heading, pitch: 0))
+            position = .camera(MapCamera(centerCoordinate: camera.center, distance: camera.distance, heading: heading, pitch: 0))
         }
+    }
+
+    /// Screen layout of the walk view, as fractions of the map's height from the top: the stop's
+    /// coordinate sits at `stopFraction`; other points must stay between `topFraction` and
+    /// `bottomFraction`, the visible map above the walk sheet.
+    static let walkStopFraction = 0.18, walkTopFraction = 0.1, walkBottomFraction = 0.36
+
+    /// Camera center and distance that keep the stop high on screen and every point in `showing`
+    /// within the visible map, never closer than `minimumDistance`.
+    static func walkCamera(stop: CLLocationCoordinate2D, heading: Double, showing points: [CLLocationCoordinate2D],
+                           minimumDistance: Double, aspect: Double) -> (center: CLLocationCoordinate2D, distance: Double) {
+        var height = minimumDistance * visibleHeightPerDistance
+        let radians = heading * .pi / 180
+        for point in points {
+            let east = (point.longitude - stop.longitude) * 111_320 * cos(stop.latitude * .pi / 180)
+            let north = (point.latitude - stop.latitude) * 111_320
+            let right = east * cos(radians) - north * sin(radians)
+            let up = east * sin(radians) + north * cos(radians)
+            if up < 0 { height = max(height, -up / (walkBottomFraction - walkStopFraction)) }
+            else { height = max(height, up / (walkStopFraction - walkTopFraction)) }
+            height = max(height, abs(right) / (0.42 * aspect))
+        }
+        height = min(height, 30_000) // A far-off start should not zoom out to a whole region.
+        let center = coordinate(from: stop, bearing: heading + 180, meters: (0.5 - walkStopFraction) * height)
+        return (center, height / visibleHeightPerDistance)
     }
 
     /// Initial compass bearing in degrees from one coordinate to another.

@@ -108,7 +108,8 @@ struct WikipediaService {
         "mausoleum", "ruins", "church", "synagogue", "mosque", "temple", "armory", "armoury", "library",
         "theater", "theatre", "sculpture", "statue", "bridge"]
     static let excludedArticleTypes = ["subway station", "railway station", "metro station", "neighborhood",
-                                       "neighbourhood", "borough of", "census-designated", "electoral district"]
+                                       "neighbourhood", "borough of", "census-designated", "electoral district",
+                                       "historic district"]
 
     /// Matches whole words in Wikipedia's short description, falling back to the title only when
     /// there is no description, so “Park Slope Food Coop” is not mistaken for a park.
@@ -211,4 +212,42 @@ private struct SPARQLResponse: Decodable {
     struct Value: Decodable { let value: String }
     struct Results: Decodable { let bindings: [[String: Value]] }
     let results: Results
+}
+
+/// Postcard place names from OpenStreetMap's reverse geocoder, which knows neighborhoods that
+/// Apple's geocoder does not (Apple calls all of Park Slope just "Brooklyn"). One request per search,
+/// within Nominatim's usage policy of at most one request a second with an identifying User-Agent.
+struct PlaceNames: Equatable {
+    let title: String
+    let subtitle: String?
+
+    static func lookup(_ coordinate: CLLocationCoordinate2D, session: URLSession = .shared) async throws -> PlaceNames? {
+        var url = URLComponents(string: "https://nominatim.openstreetmap.org/reverse")!
+        url.queryItems = [.init(name: "format", value: "jsonv2"), .init(name: "zoom", value: "16"),
+                          .init(name: "addressdetails", value: "1"), .init(name: "accept-language", value: "en"),
+                          .init(name: "lat", value: "\(coordinate.latitude)"), .init(name: "lon", value: "\(coordinate.longitude)")]
+        var request = URLRequest(url: url.url!)
+        request.timeoutInterval = 15
+        request.setValue("WikiTour-iOS/1.0 (https://github.com/xujenna/wiki-tour)", forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await session.data(for: request)
+        let response = try JSONDecoder().decode(NominatimResponse.self, from: data)
+        return names(from: response.address ?? [:])
+    }
+
+    /// The neighborhood leads, with its city (or New York City borough) below; with no neighborhood,
+    /// the city leads, with its US state or country below.
+    static func names(from address: [String: String]) -> PlaceNames? {
+        let city = address["city"] ?? address["town"] ?? address["village"] ?? address["municipality"]
+        let isNewYorkCity = city == "New York" || city == "City of New York"
+        let borough = isNewYorkCity ? address["suburb"] ?? address["borough"] : nil
+        let place = borough ?? city
+        let region = address["country_code"] == "us" ? address["state"] : address["country"]
+        if let neighborhood = address["neighbourhood"] ?? address["quarter"], neighborhood != place {
+            return PlaceNames(title: neighborhood, subtitle: place ?? region)
+        }
+        if let place { return PlaceNames(title: place, subtitle: region) }
+        return nil
+    }
+
+    private struct NominatimResponse: Decodable { let address: [String: String]? }
 }

@@ -218,6 +218,44 @@ final class WikiTourUITests: XCTestCase {
     }
 
     @MainActor
+    func testWelcomePostcardStartsTheSuggestedTour() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--ui-testing", "--reset-saved", "--suggested-preview"]
+        app.launch()
+        let postcard = app.descendants(matching: .any)["welcomePostcard"]
+        XCTAssertTrue(postcard.waitForExistence(timeout: 20))
+        XCTAssertTrue(postcard.label.hasPrefix("Welcome to Park Slope, Brooklyn."), postcard.label)
+        XCTAssertFalse(app.buttons["tourSummary"].exists, "The postcard replaces the tour bar")
+        capture(app, name: "Welcome postcard")
+        postcard.tap()
+        XCTAssertTrue(app.staticTexts["currentStopTitle"].waitForExistence(timeout: 5))
+        XCTAssertFalse(postcard.exists)
+        // Collapsing the walk keeps it as a bar; the postcard does not come back.
+        app.buttons["Sheet size"].firstMatch.swipeDown(velocity: .fast)
+        sleep(1)
+        XCTAssertTrue(app.buttons["saveWalk"].exists)
+        XCTAssertFalse(postcard.exists)
+    }
+
+    @MainActor
+    func testLoadingScreenShowsProgressUntilTheFirstSearch() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--ui-testing", "--reset-saved", "--loading-preview"]
+        app.launch()
+        let loading = app.descendants(matching: .any)["loadingScreen"]
+        XCTAssertTrue(loading.waitForExistence(timeout: 10))
+        XCTAssertEqual(loading.label, "Finding your location…")
+        sleep(2)
+        capture(app, name: "Loading screen")
+        // Normal preview launches finish loading at once, so the screen never stays up.
+        app.terminate()
+        app.launchArguments = ["--preview", "--ui-testing", "--reset-saved"]
+        app.launch()
+        XCTAssertTrue(app.buttons["savedWalks"].waitForExistence(timeout: 10))
+        XCTAssertFalse(loading.exists)
+    }
+
+    @MainActor
     private func capture(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

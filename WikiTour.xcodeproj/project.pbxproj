@@ -40,11 +40,14 @@
 		000000000000000000000014 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* ContentView.swift */; };
 		000000000000000000000015 /* TourMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* TourMapView.swift */; };
 		000000000000000000000016 /* TourListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* TourListView.swift */; };
+		00000000000000000000FA02 /* PostcardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000FA01 /* PostcardView.swift */; };
 		000000000000000000000017 /* LandmarkDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000E /* LandmarkDetailView.swift */; };
 		000000000000000000000018 /* Landmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* Landmark.swift */; };
 		000000000000000000000019 /* WikipediaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* WikipediaService.swift */; };
 		00000000000000000000001A /* TourViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000011 /* TourViewModel.swift */; };
 		00000000000000000000001B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000012 /* Assets.xcassets */; };
+		00000000000000000000FA04 /* SkyLoop.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000FA03 /* SkyLoop.mp4 */; };
+		00000000000000000000FA07 /* LoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000FA06 /* LoadingView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,11 +58,15 @@
 		00000000000000000000000B /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		00000000000000000000000C /* TourMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourMapView.swift; sourceTree = "<group>"; };
 		00000000000000000000000D /* TourListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourListView.swift; sourceTree = "<group>"; };
+		00000000000000000000FA01 /* PostcardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostcardView.swift; sourceTree = "<group>"; };
 		00000000000000000000000E /* LandmarkDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandmarkDetailView.swift; sourceTree = "<group>"; };
 		00000000000000000000000F /* Landmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Landmark.swift; sourceTree = "<group>"; };
 		000000000000000000000010 /* WikipediaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WikipediaService.swift; sourceTree = "<group>"; };
 		000000000000000000000011 /* TourViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourViewModel.swift; sourceTree = "<group>"; };
 		000000000000000000000012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		00000000000000000000FA03 /* SkyLoop.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = SkyLoop.mp4; sourceTree = "<group>"; };
+		00000000000000000000FA05 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		00000000000000000000FA06 /* LoadingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +114,8 @@
                 000000000000000000000204,
                 000000000000000000000206,
 				000000000000000000000012 /* Assets.xcassets */,
+				00000000000000000000FA03 /* SkyLoop.mp4 */,
+				00000000000000000000FA05 /* Info.plist */,
 			);
 			path = WikiTour;
 			sourceTree = "<group>";
@@ -140,6 +149,8 @@
 			children = (
 				00000000000000000000000C /* TourMapView.swift */,
 				00000000000000000000000D /* TourListView.swift */,
+				00000000000000000000FA01 /* PostcardView.swift */,
+				00000000000000000000FA06 /* LoadingView.swift */,
 				00000000000000000000000E /* LandmarkDetailView.swift */,
 			);
 			path = Views;
@@ -211,6 +222,7 @@
                 000000000000000000000203,
                 000000000000000000000205,
 				00000000000000000000001B /* Assets.xcassets in Resources */,
+				00000000000000000000FA04 /* SkyLoop.mp4 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -225,6 +237,8 @@
 				000000000000000000000014 /* ContentView.swift in Sources */,
 				000000000000000000000015 /* TourMapView.swift in Sources */,
 				000000000000000000000016 /* TourListView.swift in Sources */,
+				00000000000000000000FA02 /* PostcardView.swift in Sources */,
+				00000000000000000000FA07 /* LoadingView.swift in Sources */,
 				000000000000000000000017 /* LandmarkDetailView.swift in Sources */,
 				000000000000000000000018 /* Landmark.swift in Sources */,
 				000000000000000000000019 /* WikipediaService.swift in Sources */,
@@ -241,7 +255,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = MR89V3D6JC;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Walking Tours";
@@ -249,7 +263,7 @@
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Walking Tours uses your location to find nearby historical landmarks for your walking tour.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_FILE = WikiTour/Info.plist;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -272,7 +286,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = MR89V3D6JC;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Walking Tours";
@@ -280,7 +294,7 @@
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Walking Tours uses your location to find nearby historical landmarks for your walking tour.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_FILE = WikiTour/Info.plist;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

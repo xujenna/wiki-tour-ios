@@ -164,6 +164,39 @@ final class WikiTourTests: XCTestCase {
         XCTAssertEqual(model.suggestedWalkName, "Place 0")
     }
 
+    func testSearchThisAreaStartsANewTourFromTheSearchedSpot() async throws {
+        let home = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        let elsewhere = CLLocationCoordinate2D(latitude: 0, longitude: 3000 / 111_320)
+        XCTAssertNil(TourViewModel.tourStart(searchCenter: TourMapView.coordinate(from: home, bearing: 90, meters: 500), userLocation: home),
+                     "Searching nearby still starts from the user")
+        XCTAssertEqual(TourViewModel.tourStart(searchCenter: elsewhere, userLocation: home)?.longitude, elsewhere.longitude)
+        XCTAssertEqual(TourViewModel.tourStart(searchCenter: elsewhere, userLocation: nil)?.longitude, elsewhere.longitude)
+
+        let model = TourViewModel(defaults: defaults) { from, to in
+            WalkingLeg(polyline: MKPolyline(coordinates: [from, to], count: 2), distance: 100, duration: 60)
+        }
+        model.userLocation = home
+        model.toggleSaved(placesEast(1, spacing: 100)[0]) // A hand-edited tour near home.
+        try await waitForRoute(model)
+        let there = (0..<3).map { index in
+            Landmark(title: "There \(index)", coordinate: TourMapView.coordinate(from: elsewhere, bearing: 0, meters: Double(index + 1) * 120),
+                     description: "")
+        }
+        model.suggestWalk(from: there, near: elsewhere, replacingSuggestion: true)
+        XCTAssertEqual(model.savedLandmarks.count, 1, "A location update never replaces the user's own tour")
+        let start = TourViewModel.tourStart(searchCenter: elsewhere, userLocation: home)
+        model.suggestWalk(from: there, near: elsewhere, replacingDraft: true, startingAt: start)
+        XCTAssertEqual(model.savedLandmarks.map(\.title), ["There 0", "There 1", "There 2"], "Search this area replaces it")
+        XCTAssertTrue(model.draftIsSuggested)
+        XCTAssertFalse(model.postcardDismissed, "The new tour gets its own postcard")
+        XCTAssertEqual(model.tourStartLocation?.longitude, elsewhere.longitude)
+        try await waitForRoute(model)
+        XCTAssertEqual(model.routeStops.first?.title, "There 0", "The route starts at the searched spot, not at home")
+        XCTAssertEqual(TourViewModel(defaults: defaults).tourStartLocation?.longitude, elsewhere.longitude)
+        model.clearCurrentRoute()
+        XCTAssertEqual(model.tourStartLocation?.longitude, home.longitude)
+    }
+
     func testSuggestionsFollowDistanceWithoutDoublingBack() {
         let origin = CLLocationCoordinate2D(latitude: 0, longitude: 0)
         // Great Bend, Kansas: after two stops west of the user, continue to the next place west
@@ -306,6 +339,80 @@ final class WikiTourTests: XCTestCase {
         XCTAssertEqual(TourMapView.bearing(from: origin, to: east), 90, accuracy: 0.1)
     }
 
+    func testWalkCameraShowsTheLegToTheCurrentStop() {
+        let stop = CLLocationCoordinate2D(latitude: 40.66, longitude: -73.98)
+        let street = 780 / 0.535
+        // A short leg keeps street level.
+        let near = TourMapView.coordinate(from: stop, bearing: 180, meters: 50)
+        let short = TourMapView.walkCamera(stop: stop, heading: 0, showing: [near], minimumDistance: street, aspect: 0.5)
+        XCTAssertEqual(short.distance, street, accuracy: 1)
+        // A 400 m leg zooms out just enough that its start sits at the bottom of the visible map.
+        let start = TourMapView.coordinate(from: stop, bearing: 180, meters: 400)
+        let long = TourMapView.walkCamera(stop: stop, heading: 0, showing: [start], minimumDistance: street, aspect: 0.5)
+        let height = long.distance * 0.535
+        XCTAssertEqual(height, 400 / (TourMapView.walkBottomFraction - TourMapView.walkStopFraction), accuracy: 1)
+        // The stop sits 18% from the top: 32% of the height north of the center.
+        XCTAssertEqual(TourViewModel.distance(long.center, stop), (0.5 - 0.18) * height, accuracy: 2)
+        XCTAssertLessThan(long.center.latitude, stop.latitude)
+        // Facing east, a start due west lands below the stop the same way.
+        let west = TourMapView.coordinate(from: stop, bearing: 270, meters: 400)
+        let east = TourMapView.walkCamera(stop: stop, heading: 90, showing: [west], minimumDistance: street, aspect: 0.5)
+        XCTAssertEqual(east.distance, long.distance, accuracy: 2)
+        // Being off to the side widens the view enough to keep the user on screen.
+        let side = TourMapView.coordinate(from: stop, bearing: 90, meters: 600)
+        let wide = TourMapView.walkCamera(stop: stop, heading: 0, showing: [side], minimumDistance: street, aspect: 0.5)
+        XCTAssertEqual(wide.distance * 0.535, 600 / (0.42 * 0.5), accuracy: 1)
+    }
+
+    func testPostcardShowsForAnUntouchedSuggestionOnly() async throws {
+        let origin = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+        let model = TourViewModel(defaults: defaults) { from, to in
+            WalkingLeg(polyline: MKPolyline(coordinates: [from, to], count: 2), distance: 100, duration: 60)
+        }
+        model.userLocation = origin
+        let places = placesEast(4, spacing: 150)
+        model.suggestWalk(from: places, near: origin)
+        try await waitForRoute(model)
+        XCTAssertFalse(model.showsPostcard, "No postcard until the place name is known")
+        XCTAssertEqual(model.postcardLandmark?.id, model.routeStops.first?.id)
+        XCTAssertEqual(TourViewModel.usStateNames["NY"], "New York")
+        XCTAssertEqual(TourViewModel.postcardCity(locality: "New York", county: "Kings County", fallback: nil), "Brooklyn")
+        XCTAssertEqual(TourViewModel.postcardCity(locality: "Great Bend", county: "Barton County", fallback: nil), "Great Bend")
+        XCTAssertEqual(TourViewModel.postcardCity(locality: nil, county: "Barton County", fallback: nil), "Barton County")
+        XCTAssertTrue(TourViewModel.postcardNames(neighborhood: "Park Slope", city: "Brooklyn", region: "New York") == ("Park Slope", "Brooklyn"))
+        XCTAssertTrue(TourViewModel.postcardNames(neighborhood: nil, city: "Great Bend", region: "Kansas") == ("Great Bend", "Kansas"))
+        XCTAssertTrue(TourViewModel.postcardNames(neighborhood: "Belgrade", city: "Belgrade", region: "Serbia") == ("Belgrade", "Serbia"))
+        // OpenStreetMap address parts, as returned for real places.
+        XCTAssertEqual(PlaceNames.names(from: ["neighbourhood": "Park Slope", "suburb": "Brooklyn", "city": "New York",
+                                               "state": "New York", "country": "United States", "country_code": "us"]),
+                       PlaceNames(title: "Park Slope", subtitle: "Brooklyn"))
+        XCTAssertEqual(PlaceNames.names(from: ["quarter": "Dorćol", "suburb": "Stari grad", "city": "Belgrade",
+                                               "country": "Serbia", "country_code": "rs"]),
+                       PlaceNames(title: "Dorćol", subtitle: "Belgrade"))
+        XCTAssertEqual(PlaceNames.names(from: ["town": "Great Bend", "state": "Kansas", "country_code": "us"]),
+                       PlaceNames(title: "Great Bend", subtitle: "Kansas"))
+        XCTAssertNil(PlaceNames.names(from: [:]))
+        let middle = TourViewModel.centroid(of: placesEast(3, spacing: 100))
+        XCTAssertEqual(middle?.longitude ?? 0, 200 / 111_320, accuracy: 1e-9)
+        XCTAssertNil(TourViewModel.centroid(of: []))
+        model.dismissPostcard()
+        XCTAssertFalse(model.showsPostcard)
+        // A new suggestion brings a new postcard; editing the tour removes it.
+        model.suggestWalk(from: Array(places.prefix(2)), near: origin, replacingSuggestion: true)
+        XCTAssertFalse(model.postcardDismissed)
+        model.toggleSaved(places[3])
+        XCTAssertFalse(model.draftIsSuggested)
+        XCTAssertFalse(model.showsPostcard)
+    }
+
+    func testPostcardFontsRegister() {
+        BundledFonts.register()
+        for name in [BundledFonts.script, BundledFonts.display, BundledFonts.textBold, BundledFonts.textBlack] {
+            XCTAssertNotNil(NSDataAsset(name: name), "missing data asset \(name)")
+            XCTAssertNotNil(UIFont(name: name, size: 12), "font not registered: \(name)")
+        }
+    }
+
     func testSignificanceMatchesWholeWordsAndSkipsOrdinarySchools() {
         XCTAssertTrue(WikipediaService.isSignificant(title: "Old Stone House", description: "house museum in Brooklyn"))
         XCTAssertTrue(WikipediaService.isSignificant(title: "Brooklyn Museums", description: ""))
@@ -314,6 +421,7 @@ final class WikiTourTests: XCTestCase {
         XCTAssertFalse(WikipediaService.isSignificant(title: "Marshall Tower", description: "office building in Manhattan"))
         XCTAssertFalse(WikipediaService.isSignificant(title: "Parkside", description: "apartment complex"))
         XCTAssertFalse(WikipediaService.isSignificant(title: "7th Avenue", description: "historic subway station"))
+        XCTAssertFalse(WikipediaService.isSignificant(title: "Park Slope Historic District", description: "historic district in Brooklyn"))
         XCTAssertTrue(WikipediaService.isSignificant(title: "Prospect Park", description: "urban park in Brooklyn"))
     }
 

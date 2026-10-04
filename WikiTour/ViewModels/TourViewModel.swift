@@ -8,13 +8,19 @@ import Observation
 final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
     enum Phase { case idle, locating, loading, done }
     enum TravelMode: String, Codable { case walking, driving }
-    var phase: Phase = .idle
+    var phase: Phase = .idle { didSet { updateFirstLoad() } }
+    /// The loading screen covers the app until the first search, and any tour it suggests, is ready.
+    private(set) var hasFinishedFirstLoad = false
     var landmarks: [Landmark] = []
     private(set) var savedLandmarks: [Landmark] = []
     /// True while the draft is still the untouched suggestion built from discovery results.
     private(set) var draftIsSuggested = false
     /// Suggested tours drive between stops when too few places are within walking distance.
     private(set) var draftMode: TravelMode = .walking
+    /// A searched area's tour starts at the searched spot; nil starts from the user's location.
+    private(set) var fixedTourStart: CLLocationCoordinate2D?
+    /// Where the current draft's first leg begins.
+    var tourStartLocation: CLLocationCoordinate2D? { fixedTourStart ?? userLocation }
     /// After "Keep going", the stops stay in the order walked instead of being re-optimized.
     private var startsInRouteOrder = false
     private var openWalkMode: TravelMode?
@@ -28,6 +34,12 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
     var userLocation: CLLocationCoordinate2D?
     var searchCenter = CLLocationCoordinate2D(latitude: 40.666, longitude: -73.984)
     var locationName = "Explore nearby"
+    /// The postcard's place names: the neighborhood and its city, like "Park Slope" and "Brooklyn";
+    /// or, with no neighborhood, the city and its US state or country, like "Great Bend" and "Kansas".
+    private(set) var postcardCity: String?
+    private(set) var postcardRegion: String?
+    /// Set when the user starts, edits, or dismisses the welcome postcard for the current suggestion.
+    private(set) var postcardDismissed = false
     var statusMessage = "Finding your location…"
     var error: String?
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
@@ -35,7 +47,7 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
     private(set) var routeLines: [MKPolyline] = []
     private(set) var routeDistance: CLLocationDistance = 0
     private(set) var routeDuration: TimeInterval = 0
-    private(set) var isRouting = false
+    private(set) var isRouting = false { didSet { updateFirstLoad() } }
     /// True while "Keep going" finds and routes more stops.
     private(set) var isExtending = false
     /// Set when "Keep going" finds nothing more to add.
@@ -62,6 +74,7 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
     private let suggestedKey = "savedLandmarksSuggested.v1"
     private let modeKey = "routeMode.v1"
     private let routeOrderKey = "routeOrderFixed.v1"
+    private let tourStartKey = "tourStart.v1"
     nonisolated static let suggestedStopLimit = 10
     /// A suggested walk stays within this much walking time, measured from the user to the last stop.
     nonisolated static let walkingTimeLimit: TimeInterval = 75 * 60
@@ -80,6 +93,9 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
             draftIsSuggested = defaults.bool(forKey: suggestedKey)
             draftMode = defaults.string(forKey: modeKey).flatMap(TravelMode.init) ?? .walking
             startsInRouteOrder = defaults.bool(forKey: routeOrderKey)
+            if let start = defaults.array(forKey: tourStartKey) as? [Double], start.count == 2 {
+                fixedTourStart = CLLocationCoordinate2D(latitude: start[0], longitude: start[1])
+            }
         }
         if let data = defaults.data(forKey: "savedWalks.v1"),
            let walks = try? JSONDecoder().decode([SavedWalk].self, from: data) { savedWalks = walks }
@@ -88,6 +104,13 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
     }
 
     var isBusy: Bool { phase == .locating || phase == .loading }
+
+    var showsLoadingScreen: Bool { !hasFinishedFirstLoad }
+    var loadingCaption: String { phase == .done && isRouting ? "Planning your walk…" : statusMessage }
+
+    private func updateFirstLoad() {
+        if !hasFinishedFirstLoad && phase == .done && !isRouting { hasFinishedFirstLoad = true }
+    }
     var currentStop: Landmark? {
         routeStops.indices.contains(currentStopIndex) ? routeStops[currentStopIndex] : nil
     }
@@ -118,12 +141,21 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         if ProcessInfo.processInfo.arguments.contains("--preview"),
            ProcessInfo.processInfo.arguments.contains("--ui-testing") {
             usesPreviewData = true
+            if ProcessInfo.processInfo.arguments.contains("--loading-preview") {
+                phase = .locating // Holds the loading screen for UI tests.
+                return
+            }
             landmarks = Landmark.previews
             userLocation = Landmark.previewOrigin
             searchCenter = .init(latitude: 40.6655, longitude: -73.984)
             locationName = "Park Slope, Brooklyn"
             phase = .done
             cameraRevision += 1
+            if ProcessInfo.processInfo.arguments.contains("--suggested-preview") {
+                postcardCity = "Park Slope"
+                postcardRegion = "Brooklyn"
+                suggestWalk(from: Landmark.previews, near: Landmark.previewOrigin)
+            }
             if ProcessInfo.processInfo.arguments.contains("--saved-preview") {
                 for landmark in Landmark.previews.prefix(2) where !isSaved(landmark) { toggleSaved(landmark) }
             }
@@ -152,9 +184,10 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         }
     }
 
-    /// `refreshesSuggestion` is true only for searches driven by a new device location, so panning and
-    /// tapping "Search this area" never swap out the walk the user is looking at.
-    func search(near coordinate: CLLocationCoordinate2D, refreshesSuggestion: Bool = false) {
+    /// `refreshesSuggestion` is true for searches driven by a new device location: they replace only an
+    /// untouched suggestion. `startsNewTour` is true when the user taps "Search this area": that is an
+    /// explicit request for a tour there, so it replaces the current draft (saved walks are untouched).
+    func search(near coordinate: CLLocationCoordinate2D, refreshesSuggestion: Bool = false, startsNewTour: Bool = false) {
         discoveryTask?.cancel()
         let requestID = UUID()
         discoveryID = requestID
@@ -167,14 +200,18 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
                 let results = try await WikipediaService.shared.findLandmarks(near: coordinate)
                 guard !Task.isCancelled, discoveryID == requestID else { return }
                 landmarks = withUserDistances(results)
-                let origin = userLocation ?? coordinate
-                if !suggestWalk(from: landmarks, near: origin, replacingSuggestion: refreshesSuggestion) {
+                // A searched area far from the user is toured from the searched spot, not from the user.
+                let start = startsNewTour ? Self.tourStart(searchCenter: coordinate, userLocation: userLocation) : nil
+                let origin = start ?? userLocation ?? coordinate
+                if !suggestWalk(from: landmarks, near: origin, replacingSuggestion: refreshesSuggestion,
+                                replacingDraft: startsNewTour, startingAt: start) {
                     // Too little within walking distance: look across the full 6-mile range and drive.
                     statusMessage = "Few places within walking distance. Looking farther away…"
                     let wider = try await WikipediaService.shared.findLandmarks(near: coordinate, radius: WikipediaService.maximumRadius)
                     guard !Task.isCancelled, discoveryID == requestID else { return }
                     landmarks = withUserDistances(wider)
-                    suggestDrive(from: landmarks, near: origin, replacingSuggestion: refreshesSuggestion)
+                    suggestDrive(from: landmarks, near: origin, replacingSuggestion: refreshesSuggestion,
+                                 replacingDraft: startsNewTour, startingAt: start)
                 }
                 phase = .done
                 statusMessage = landmarks.isEmpty ? "No places found here. Try a different area." : "Tap a place to discover its story."
@@ -182,6 +219,12 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
                 let placemark = try? await geocoder.reverseGeocodeLocation(CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)).first
                 guard !Task.isCancelled, discoveryID == requestID else { return }
                 locationName = placemark?.subLocality ?? placemark?.locality ?? "Around this area"
+                let apple = placemark.map(Self.postcardNames(for:))
+                // Name the area the tour covers: the middle of its stops, not the edge it starts from.
+                let osm = try? await PlaceNames.lookup(draftIsSuggested ? Self.centroid(of: savedLandmarks) ?? coordinate : coordinate)
+                guard !Task.isCancelled, discoveryID == requestID else { return }
+                postcardCity = osm?.title ?? apple?.title
+                postcardRegion = osm.map { $0.subtitle } ?? apple?.subtitle
             } catch {
                 guard !Task.isCancelled, discoveryID == requestID else { return }
                 self.error = "Couldn't load nearby places. Check your connection and try again."
@@ -189,6 +232,67 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
             }
         }
     }
+
+    static func centroid(of landmarks: [Landmark]) -> CLLocationCoordinate2D? {
+        guard !landmarks.isEmpty else { return nil }
+        let count = Double(landmarks.count)
+        return CLLocationCoordinate2D(latitude: landmarks.map(\.latitude).reduce(0, +) / count,
+                                      longitude: landmarks.map(\.longitude).reduce(0, +) / count)
+    }
+
+    /// A newly suggested tour opens with a welcome postcard instead of the tour bar.
+    var showsPostcard: Bool {
+        draftIsSuggested && !postcardDismissed && !routeStops.isEmpty && !isRouting && routeError == nil
+            && activeSavedWalkID == nil && unsavedWalkName == nil && postcardCity != nil
+    }
+
+    /// The postcard photo: the first stop's Wikipedia photo, or the next stop that has one.
+    var postcardLandmark: Landmark? {
+        routeStops.first { $0.imageURL != nil || $0.previewImage != nil } ?? routeStops.first
+    }
+
+    func dismissPostcard() { postcardDismissed = true }
+
+    static func postcardNames(for placemark: CLPlacemark) -> (title: String?, subtitle: String?) {
+        let city = postcardCity(locality: placemark.locality, county: placemark.subAdministrativeArea, fallback: placemark.name)
+        return postcardNames(neighborhood: placemark.subLocality, city: city, region: postcardRegion(for: placemark))
+    }
+
+    /// The most specific name leads, since a city can hold many tours.
+    static func postcardNames(neighborhood: String?, city: String?, region: String?) -> (title: String?, subtitle: String?) {
+        if let neighborhood, !neighborhood.isEmpty, neighborhood != city { return (neighborhood, city ?? region) }
+        return (city, region)
+    }
+
+    /// The city, except that New York City is named by borough, as on the web app's postcard.
+    static func postcardCity(locality: String?, county: String?, fallback: String?) -> String? {
+        let boroughs = ["Kings County": "Brooklyn", "New York County": "Manhattan", "Queens County": "Queens",
+                        "Bronx County": "The Bronx", "Richmond County": "Staten Island"]
+        if locality == "New York" || locality == "New York City", let borough = county.flatMap({ boroughs[$0] }) {
+            return borough
+        }
+        return locality ?? county ?? fallback
+    }
+
+    /// US states are spelled out, as on the web app's postcard; elsewhere the country is used.
+    static func postcardRegion(for placemark: CLPlacemark) -> String? {
+        if placemark.isoCountryCode == "US", let state = placemark.administrativeArea {
+            return usStateNames[state] ?? state
+        }
+        return placemark.country ?? placemark.administrativeArea
+    }
+
+    static let usStateNames = [
+        "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado",
+        "CT": "Connecticut", "DE": "Delaware", "DC": "Washington, D.C.", "FL": "Florida", "GA": "Georgia",
+        "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+        "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts",
+        "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri", "MT": "Montana",
+        "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico",
+        "NY": "New York", "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+        "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
+        "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+        "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming", "PR": "Puerto Rico"]
 
     private func withUserDistances(_ results: [Landmark]) -> [Landmark] {
         results.map { landmark in
@@ -213,35 +317,47 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
     func isSaved(_ landmark: Landmark) -> Bool { savedLandmarks.contains { $0.id == landmark.id } }
 
     /// Matches the web app: nearby places become a tour as soon as they load, without any taps.
-    /// An existing tour is kept unless it is an untouched suggestion and the user's location changed.
-    /// A draft the user has edited, or an open saved walk, is never replaced.
-    private func canSuggest(replacingSuggestion: Bool) -> Bool {
+    /// An existing tour is kept unless it is an untouched suggestion and the user's location changed,
+    /// or the user asked for a new tour with "Search this area". An open saved walk is never replaced.
+    private func canSuggest(replacingSuggestion: Bool, replacingDraft: Bool = false) -> Bool {
         guard activeSavedWalkID == nil, unsavedWalkName == nil else { return false }
-        return savedLandmarks.isEmpty || (draftIsSuggested && replacingSuggestion)
+        return savedLandmarks.isEmpty || replacingDraft || (draftIsSuggested && replacingSuggestion)
+    }
+
+    /// Where a "Search this area" tour starts: nil (the user's live location) when the user is in the
+    /// searched area, or else the searched spot, so the first leg is not a long trip from elsewhere.
+    static func tourStart(searchCenter: CLLocationCoordinate2D, userLocation: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
+        if let userLocation, distance(userLocation, searchCenter) <= 1000 { return nil }
+        return searchCenter
     }
 
     /// Suggests a walk. Returns false only when a suggestion is allowed but too few places are within
     /// walking distance, so the caller should search farther and call `suggestDrive`.
     @discardableResult
     func suggestWalk(from candidates: [Landmark], near origin: CLLocationCoordinate2D,
-                     replacingSuggestion: Bool = false) -> Bool {
-        guard canSuggest(replacingSuggestion: replacingSuggestion) else { return true }
+                     replacingSuggestion: Bool = false, replacingDraft: Bool = false,
+                     startingAt start: CLLocationCoordinate2D? = nil) -> Bool {
+        guard canSuggest(replacingSuggestion: replacingSuggestion, replacingDraft: replacingDraft) else { return true }
         guard let stops = Self.walkingStops(from: candidates, near: origin) else { return false }
-        applySuggestion(stops, mode: .walking)
+        applySuggestion(stops, mode: .walking, start: start)
         return true
     }
 
-    func suggestDrive(from candidates: [Landmark], near origin: CLLocationCoordinate2D, replacingSuggestion: Bool = false) {
-        guard canSuggest(replacingSuggestion: replacingSuggestion) else { return }
-        applySuggestion(Self.drivingStops(from: candidates, near: origin), mode: .driving)
+    func suggestDrive(from candidates: [Landmark], near origin: CLLocationCoordinate2D, replacingSuggestion: Bool = false,
+                      replacingDraft: Bool = false, startingAt start: CLLocationCoordinate2D? = nil) {
+        guard canSuggest(replacingSuggestion: replacingSuggestion, replacingDraft: replacingDraft) else { return }
+        applySuggestion(Self.drivingStops(from: candidates, near: origin), mode: .driving, start: start)
     }
 
-    private func applySuggestion(_ stops: [Landmark], mode: TravelMode) {
+    /// `start` is a fixed starting point for a searched area; nil starts from the user's location.
+    private func applySuggestion(_ stops: [Landmark], mode: TravelMode, start: CLLocationCoordinate2D? = nil) {
         guard !stops.isEmpty, stops.map(\.id) != savedLandmarks.map(\.id) || mode != draftMode else { return }
+        fixedTourStart = start
         savedLandmarks = stops
         draftIsSuggested = true
         draftMode = mode
         startsInRouteOrder = false
+        postcardDismissed = false // A new tour gets its own postcard.
         persistSaved()
         prepareRoute()
         routeFitRevision += 1
@@ -299,7 +415,11 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         openWalkMode = nil
         draftIsSuggested = false
         startsInRouteOrder = false
-        if savedLandmarks.isEmpty { draftMode = .walking } // A tour built by hand starts as a walk.
+        if savedLandmarks.isEmpty {
+            // A tour built by hand starts as a walk from the user.
+            draftMode = .walking
+            fixedTourStart = nil
+        }
         if isSaved(landmark) { savedLandmarks.removeAll { $0.id == landmark.id } }
         else { savedLandmarks.append(landmark) }
         persistSaved()
@@ -311,6 +431,8 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         defaults.set(draftIsSuggested, forKey: suggestedKey)
         defaults.set(draftMode.rawValue, forKey: modeKey)
         defaults.set(startsInRouteOrder, forKey: routeOrderKey)
+        if let start = fixedTourStart { defaults.set([start.latitude, start.longitude], forKey: tourStartKey) }
+        else { defaults.removeObject(forKey: tourStartKey) }
     }
 
     func clearCurrentRoute() {
@@ -321,10 +443,12 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         draftIsSuggested = false
         draftMode = .walking
         startsInRouteOrder = false
+        fixedTourStart = nil
         defaults.removeObject(forKey: savedKey)
         defaults.removeObject(forKey: suggestedKey)
         defaults.removeObject(forKey: modeKey)
         defaults.removeObject(forKey: routeOrderKey)
+        defaults.removeObject(forKey: tourStartKey)
         // Reuse the route reset to cancel pending directions and invalidate stale results.
         prepareRoute()
     }
@@ -344,7 +468,7 @@ final class TourViewModel: NSObject, @preconcurrency CLLocationManagerDelegate {
         currentStopIndex = 0
         isRouting = !savedLandmarks.isEmpty
         guard !savedLandmarks.isEmpty else { return }
-        let origin = userLocation ?? savedLandmarks[0].coordinate
+        let origin = tourStartLocation ?? savedLandmarks[0].coordinate
         let ordered = startsInRouteOrder ? savedLandmarks : Self.orderedStops(savedLandmarks, from: origin)
         let mode = draftMode
         // Only a suggested walk is shortened; places the user picked are always kept.

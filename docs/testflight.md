@@ -2,7 +2,7 @@
 
 - Bundle ID: `com.xujenna.wikitour`
 - Apple developer team: `MR89V3D6JC`
-- Current version: 1.0 (10) — uploaded October 3, 2026; supersedes build 9
+- Current version: 1.0 (11) — uploaded October 4, 2026; supersedes build 10
 - Firebase project: `wiki-tour-ios-xujenna`; iOS app ID `1:607056516365:ios:3e2ad18e46012e2344cc44`
 - Saved places and walks persist locally. FirebaseCore is configured; this build does not include authentication or cloud synchronization.
 
@@ -89,3 +89,12 @@ Verified in App Store Connect at 15:48 EDT: build 9 shows Testing in the Persona
 - Solid route line and fixed saved-marker shadow.
 
 Validation: 23 unit tests and 6 UI tests passed on this code. Signed archive: `/private/tmp/WikiTour-TestFlight-v10.xcarchive` (log `/private/tmp/wiki-tour-archive-v10.log`). Uploaded October 3, 2026 at 18:07:39 EDT (log `/private/tmp/wiki-tour-upload-v10.log`). The build declares no non-exempt encryption, so it should not wait on export compliance.
+
+## Build 11: welcome postcard, loading screen, and searching other areas
+
+- A new suggested tour opens with the welcome postcard from Figma (25:486 / 23:230): the first stop's Wikipedia photo with matched image adjustments and a pink halftone, the neighborhood name in Borel, Brandon Grotesque and Brandon Text lettering, and a tap to start. Neighborhood names come from OpenStreetMap, with Apple's geocoder as a fallback.
+- First-load screen: the docbotic.care sky video under a dark halftone with the app icon's shoe, a spinner, and status caption; the launch screen shows the same shoe on the sky's average color.
+- Search this area builds a new tour (and postcard) for the searched area, starting from the searched spot when the user is elsewhere; the postcard is named for the middle of the tour.
+- Walk view zooms out just enough to show where each leg starts. Historic districts are no longer tour stops. The Search this area button matches the map buttons.
+
+Validation: 27 unit tests and 8 UI tests passed on this code. Signed archive: `/private/tmp/WikiTour-TestFlight-v11.xcarchive` (log `/private/tmp/wiki-tour-archive-v11.log`). Uploaded October 4, 2026 at 15:46 EDT (log `/private/tmp/wiki-tour-upload-v11.log`). Brandon Grotesque and Brandon Text are commercial fonts bundled at the owner's request for this unpublished, internal-only app.

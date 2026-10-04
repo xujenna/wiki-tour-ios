@@ -4,6 +4,7 @@ import FirebaseCore
 @main
 struct WikiTourApp: App {
     init() {
+        BundledFonts.register()
         if !ProcessInfo.processInfo.arguments.contains("--ui-testing") {
             FirebaseApp.configure()
         }

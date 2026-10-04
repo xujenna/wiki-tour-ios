@@ -4,3 +4,6 @@ xcuserdata/
 DerivedData/
 *.xcresult
 build/
+# Commercial fonts (Brandon Grotesque, Brandon Text) stay local; run scripts/install-brandon-fonts.sh.
+WikiTour/Assets.xcassets/BrandonGrotesque-*.dataset/
+WikiTour/Assets.xcassets/BrandonText-*.dataset/
